@@ -53,5 +53,4 @@ void hstx_dvi_vt_init() {
     vt_emu_put_str(&vt_emu, (vt_char_t*)"Pico virtual terminal v0.1\r\n");
 }
 ```
-    vt_emu_put_str(&vt_emu, (vt_char_t*)"Provided by fruit-bat 2025\r\n\r\n");
-}
+
