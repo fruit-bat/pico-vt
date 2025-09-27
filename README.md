@@ -10,7 +10,7 @@ There are specific (possibly not good) reasons for this library existing:
 
 The tests are very simple and do not rely on a framework (I am so tired of trying to get old testing frameworks to function).
 
-The code is not complete and subject to change, but I am happy to recieve pull requests for changes... particularly if they have tests included.
+The code is not complete and subject to change, but I am happy to recieve pull requests... particularly if they have tests included.
 
 
 An example of setting up a terminal is shown below:
