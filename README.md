@@ -5,7 +5,7 @@ This is an ANSI terminal emulator for embeded projects based loosely on [libtmt]
 
 There are specific (possibly not good) reasons for this library existing:
 * I need cell (character & attributes) encoding/decoding to be fast as I am usinging it in a beam chasing renderer.
-* I need it to have a small memory footprint would rather it did not use malloc/free.
+* I need it to have a small memory footprint and would rather it did not use malloc/free.
 * I want it to be testable so I can correct mistakes and extend it.
 
 The tests are very simple and do not rely on a framework (I am so tired of trying to get old testing frameworks to function).
