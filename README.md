@@ -1,7 +1,7 @@
 # pico-vt
 Terminal emulator
 
-This is an ANSI terminal emulator for embeded projects bases losely on [libtmt](https://github.com/deadpixi/libtmt).
+This is an ANSI terminal emulator for embeded projects bases loosely on [libtmt](https://github.com/deadpixi/libtmt).
 
 There are specific (possibly not good) reasons for this library existing:
 * I need cell (character & attributes) encoding/decoding to be fast as I am usinging it in a beam chasing renderer.
