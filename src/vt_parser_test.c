@@ -111,6 +111,18 @@ int main() {
         assert(p.params[5] == 0);
     }
     {
+        // Large parameters saturate rather than overflow
+        const vt_state_t* s = vt_parser_put_str(&p, (vt_char_t*)"\033[65535;65536;99999999999999999999;0065535;7m");
+        assert(s != NULL);
+        assert(s->n == VT_A_SGR);
+        assert(p.n_params == 5);
+        assert(p.params[0] == VT_PARSER_MAX_PARAM);
+        assert(p.params[1] == VT_PARSER_MAX_PARAM);
+        assert(p.params[2] == VT_PARSER_MAX_PARAM);
+        assert(p.params[3] == 65535);
+        assert(p.params[4] == 7);
+    }
+    {
         const vt_state_t* s = vt_parser_put_str(&p, (vt_char_t*)"\033[m"); // ESC
         assert(s != NULL);
         assert(s->m == 'm');

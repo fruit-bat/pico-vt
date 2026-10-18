@@ -145,6 +145,10 @@ typedef struct {
     uint8_t f;      // Flags
 } vt_state_t;
 
+// Numeric parameters saturate at this value rather than overflowing (as xterm).
+// It also keeps every parameter within vt_coord_t.
+#define VT_PARSER_MAX_PARAM 65535
+
 typedef struct {
     const vt_state_t* state;       // Current state
     uint32_t params[16];           // Parameters collected

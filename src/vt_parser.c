@@ -353,7 +353,9 @@ const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
                 // Collect parameter digit
                 uint8_t pi = p->n_params - 1;
                 if (pi < COUNT_ARR(p->params)) {
-                    p->params[pi] = p->params[pi] * 10 + (ch - '0');
+                    // Saturate; the value is at most VT_PARSER_MAX_PARAM so this can't overflow
+                    const uint32_t v = p->params[pi] * 10 + (ch - '0');
+                    p->params[pi] = v > VT_PARSER_MAX_PARAM ? VT_PARSER_MAX_PARAM : v;
                 }
             }
             if (s->f & (VT_F_NEXT_CH | VT_F_FINAL)) {

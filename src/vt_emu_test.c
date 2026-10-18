@@ -776,6 +776,19 @@ void test_line_and_char_edits(vt_emu_t* e) {
     assert(t->r == t->h - 1 && t->c == 6);
 
     // VPA is relative to the margins in origin mode
+    // Huge parameters clamp to the screen rather than wrapping around
+    vt_emu_put_str(e, (vt_char_t*)"\033[65537;65537H");
+    assert(t->r == t->h - 1 && t->c == t->w - 1);
+    vt_emu_put_str(e, (vt_char_t*)"\033[H\033[99999999999999999999d\033[4294967297G");
+    assert(t->r == t->h - 1 && t->c == t->w - 1);
+    vt_emu_put_str(e, (vt_char_t*)"\033[H\033[65537B\033[65537C");
+    assert(t->r == t->h - 1 && t->c == t->w - 1);
+    vt_emu_put_str(e, (vt_char_t*)"\033[65537A\033[65537D");
+    assert(t->r == 0 && t->c == 0);
+    vt_emu_put_str(e, (vt_char_t*)"\033[2;65537r");
+    assert(t->mt == 1 && t->mb == t->h - 1);
+    vt_emu_put_str(e, (vt_char_t*)"\033[r");
+
     vt_emu_put_str(e, (vt_char_t*)"\033[5;10r\033[?6h\033[2d");
     assert(t->r == 5);
     vt_emu_put_str(e, (vt_char_t*)"\033[100d");
