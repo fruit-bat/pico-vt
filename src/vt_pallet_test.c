@@ -47,9 +47,38 @@ void vt_pallet_make_cb(
     uint32_t b
 ) {
     printf("%lu %03lu %03lu %03lu\n", (lu)i, (lu)r, (lu)g, (lu)b);
+    uint8_t (*rgb)[3] = d;
+    rgb[i][0] = r;
+    rgb[i][1] = g;
+    rgb[i][2] = b;
+}
+
+// Exact palette colours map back to themselves
+void test_rgb_to_256_exact(uint8_t rgb[256][3]) {
+    for (uint32_t i = 16; i < 256; ++i) {
+        assert(vt_pallet_rgb_to_256(rgb[i][0], rgb[i][1], rgb[i][2]) == i);
+    }
+}
+
+void test_rgb_to_256_nearest() {
+    assert(vt_pallet_rgb_to_256(0, 0, 0) == 16);
+    assert(vt_pallet_rgb_to_256(255, 255, 255) == 231);
+    assert(vt_pallet_rgb_to_256(255, 0, 0) == 196);
+    assert(vt_pallet_rgb_to_256(250, 5, 10) == 196);         // Nearly red
+    assert(vt_pallet_rgb_to_256(100, 100, 100) == 241);      // Grey 98 beats cube 95 (not grey 108)
+    assert(vt_pallet_rgb_to_256(128, 128, 128) == 244);      // Grey ramp 128
+    assert(vt_pallet_rgb_to_256(10, 10, 12) == 232);         // Near black is grey 8, not cube 0
+    assert(vt_pallet_rgb_to_256(1000, 1000, 1000) == 231);   // Out of range values clamp
 }
 
 int main() {
+    uint8_t rgb[256][3];
+    vt_pallet_make_256_colours(rgb, vt_pallet_make_cb);
 
-    vt_pallet_make_256_colours(0, vt_pallet_make_cb);
+    // Bright cyan was previously yellow
+    assert(rgb[14][0] == 85 && rgb[14][1] == 255 && rgb[14][2] == 255);
+
+    test_rgb_to_256_exact(rgb);
+    test_rgb_to_256_nearest();
+    printf("all ok\n");
 }

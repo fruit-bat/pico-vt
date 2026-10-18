@@ -1,6 +1,7 @@
 
 
 #include "vt_emu.h"
+#include "vt_pallet.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -208,23 +209,39 @@ static void vt_emu_sgr(vt_emu_t* const e) {
                 }        
             }
             else if (z == 8) {
-                if ((p->n_params > i + 2) && (p->params[i + 1] == 5)) {
-                    const uint32_t x = p->params[i + 2];
+                // 38;5;n / 48;5;n     256 colours
+                // 38;2;r;g;b / 48;...  24 bit colour, mapped to the nearest of the 256
+                const uint32_t m = vt_emu_get_p0(p, i + 1);
+                uint32_t ci = 256; // None
+                if (m == 5) {
+                    if (p->n_params > i + 2) ci = p->params[i + 2];
+                    i += 2;
+                }
+                else if (m == 2) {
+                    if (p->n_params > i + 4) {
+                        ci = vt_pallet_rgb_to_256(p->params[i + 2], p->params[i + 3], p->params[i + 4]);
+                    }
+                    i += 4;
+                }
+                else {
+                    // Unknown colour model: the remaining parameters can't be interpreted
+                    i = p->n_params;
+                }
+                if (ci < 256) {
                     if (fg) {
-                        vt_term_set_fgci(t, x & 0xff);
+                        vt_term_set_fgci(t, ci);
                     }
                     else {
-                        vt_term_set_bgci(t, x & 0xff);
+                        vt_term_set_bgci(t, ci);
                     }
                 }
-                i += 2;
             }
             else if (z == 9) {
                 if (fg) {
                     vt_term_set_fgci(t, VT_TERM_DEFAULT_FG);
                 }
                 else {
-                    vt_term_set_bgci(t, VT_TERM_DEFAULT_FG);
+                    vt_term_set_bgci(t, VT_TERM_DEFAULT_BG);
                 }
             }
         }
@@ -379,14 +396,6 @@ void vt_emu_put_ch(
     case VT_A_C0_DC4:      // Device Control 4
         DEBUG("VT_A_C0_DC4\n");
         break;
-    case VT_A_IND:         // VT100 Index (ESC D)
-        DEBUG("VT_A_IND\n");
-        break;
-    case VT_A_NEL: {        // VT100 Next Line (ESC E)
-        DEBUG("VT_A_NEL");
-        // TODO investigate behaviour
-        break;
-    }
     case VT_A_HTS: {        // VT100 Horizontal Tab Set (ESC H)
         DEBUG("VT_A_HTS %lu\n", (ul)t->c);
         vt_tabs_set_tab(&e->tabs, t->c);
@@ -405,6 +414,19 @@ void vt_emu_put_ch(
         }
         break;
     } 
+    case VT_A_IND:         // Index (ESC D): down a line, scrolling at the bottom margin
+        DEBUG("VT_A_IND\n");
+        vt_term_index(t);
+        break;
+    case VT_A_NEL:         // Next Line (ESC E): CR + index
+        DEBUG("VT_A_NEL\n");
+        vt_term_cr(t);
+        vt_term_index(t);
+        break;
+    case VT_A_RIS:         // Reset to Initial State (ESC c)
+        DEBUG("VT_A_RIS\n");
+        vt_emu_reset(e);
+        break;
     case VT_A_RI:          // VT100 Reverse Index (ESC M)
         DEBUG("VT_A_RI\n");
         vt_term_reverse_nl(t);

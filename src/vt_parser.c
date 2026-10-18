@@ -141,6 +141,7 @@ const vt_state_t vt_states_esc[] = {
     {'E',          VT_A_NEL,          VT_F_FINAL},   // ESC E
     {'H',          VT_A_HTS,          VT_F_FINAL},   // ESC H
     {'M',          VT_A_RI,           VT_F_FINAL},   // ESC M
+    {'c',          VT_A_RIS,          VT_F_FINAL},   // ESC c
     {'N',          VT_A_SS2,          VT_F_FINAL},   // ESC N
     {'O',          VT_A_SS3,          VT_F_FINAL},   // ESC O
     {'P',          VT_A_DCS,          VT_F_FINAL},   // ESC P

@@ -107,6 +107,7 @@ typedef enum {
     VT_A_DCH,         // DCH - Delete characters
     VT_A_ECH,         // ECH - Erase characters
     VT_A_VPA,         // VPA - Vertical position absolute
+    VT_A_RIS,         // RIS - Reset to initial state (ESC c)
     VT_A_RM,          // Reset Mode
     VT_A_SM,          // Set Mode
     VT_A_SU,          // Scroll Up

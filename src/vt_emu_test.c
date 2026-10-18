@@ -796,6 +796,91 @@ void test_line_and_char_edits(vt_emu_t* e) {
     vt_emu_put_str(e, (vt_char_t*)"\033[?6l\033[r");
 }
 
+void test_sgr_colours_extended(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test SGR default and 24 bit colours\n");
+    // 39/49 restore the default foreground/background
+    vt_emu_put_str(e, (vt_char_t*)"\033[33;44m\033[49m");
+    assert(vt_cell_fg_get(t->attr) == 3);
+    assert(vt_cell_bg_get(t->attr) == VT_TERM_DEFAULT_BG);
+    vt_emu_put_str(e, (vt_char_t*)"\033[39m");
+    assert(vt_cell_fg_get(t->attr) == VT_TERM_DEFAULT_FG);
+
+    // 24 bit colour maps to the nearest palette colour and its values are not read as SGR codes
+    vt_emu_put_str(e, (vt_char_t*)"\033[0;38;2;1;4;5m");
+    assert(vt_cell_fg_get(t->attr) == 16);
+    assert(vt_cell_flags_get(t->attr) == VT_CELL_FLAGS_NORMAL);
+    vt_emu_put_str(e, (vt_char_t*)"\033[38;2;255;0;0;48;2;128;128;128;1m");
+    assert(vt_cell_fg_get(t->attr) == 196);
+    assert(vt_cell_bg_get(t->attr) == 244);
+    assert(vt_cell_flags_get(t->attr) == VT_CELL_FLAGS_BOLD);
+
+    // 256 colours, including codes after them
+    vt_emu_put_str(e, (vt_char_t*)"\033[0;38;5;123;48;5;45;4m");
+    assert(vt_cell_fg_get(t->attr) == 123);
+    assert(vt_cell_bg_get(t->attr) == 45);
+    assert(vt_cell_flags_get(t->attr) == VT_CELL_FLAGS_UNDERLINE);
+
+    // Out of range or incomplete colours are ignored
+    vt_emu_put_str(e, (vt_char_t*)"\033[0;38;5;300m");
+    assert(vt_cell_fg_get(t->attr) == VT_TERM_DEFAULT_FG);
+    vt_emu_put_str(e, (vt_char_t*)"\033[0;38;2;10;20m");
+    assert(vt_cell_fg_get(t->attr) == VT_TERM_DEFAULT_FG);
+    assert(vt_cell_flags_get(t->attr) == VT_CELL_FLAGS_NORMAL);
+    // An unknown colour model stops the rest being misread
+    vt_emu_put_str(e, (vt_char_t*)"\033[0;38;3;1;4m");
+    assert(vt_cell_fg_get(t->attr) == VT_TERM_DEFAULT_FG);
+    assert(vt_cell_flags_get(t->attr) == VT_CELL_FLAGS_NORMAL);
+
+    vt_emu_put_str(e, (vt_char_t*)"\033[0m");
+}
+
+void test_index_next_line(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test IND and NEL\n");
+    // IND moves down keeping the column, NEL also returns to column 0
+    vt_emu_put_str(e, (vt_char_t*)"ab\033Dc");
+    check_grid_row(t, 0, "ab                  ");
+    check_grid_row(t, 1, "  c                 ");
+    vt_emu_put_str(e, (vt_char_t*)"\033Ed");
+    check_grid_row(t, 2, "d                   ");
+
+    // IND never returns to column 0, even in LNM mode
+    vt_emu_put_str(e, (vt_char_t*)"\033[20h\033Dx\033[20l");
+    check_grid_row(t, 3, " x                  ");
+
+    // Both scroll the region at the bottom margin
+    set_grid_rows(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[3;6r\033[6;5H\033D");
+    assert(t->r == 5 && t->c == 4);
+    check_grid_rows(t, "ABDEF GHIJKLMNOP");
+    vt_emu_put_str(e, (vt_char_t*)"\033E");
+    assert(t->r == 5 && t->c == 0);
+    check_grid_rows(t, "ABEF  GHIJKLMNOP");
+    vt_emu_put_str(e, (vt_char_t*)"\033[r");
+}
+
+void test_reset_to_initial_state(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test RIS\n");
+    vt_emu_put_str(e, (vt_char_t*)"abc\033[3;8r\033[?7l\033[4h\033[1;31m\033[3g\033[5;6H");
+    vt_emu_put_str(e, (vt_char_t*)"\033c");
+    check_grid_blank(t);
+    assert(t->r == 0 && t->c == 0);
+    assert(t->mt == 0 && t->mb == t->h - 1);
+    assert(t->flags == VT_TERM_MODES_DEFAULT);
+    assert(t->attr == vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS));
+    // Tab stops are back to every 8 columns
+    vt_emu_put_str(e, (vt_char_t*)"\t");
+    assert(t->c == 8);
+}
+
 int main() {
 
     const vt_coord_t w = 20;
@@ -815,6 +900,9 @@ int main() {
     test_modes(&e);
     test_replies(&e);
     test_line_and_char_edits(&e);
+    test_sgr_colours_extended(&e);
+    test_index_next_line(&e);
+    test_reset_to_initial_state(&e);
     test_repeat_character(&e);
     test_horizontal_tabs(&e);
     // test_stdin(&e);

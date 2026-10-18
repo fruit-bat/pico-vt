@@ -219,6 +219,12 @@ void vt_term_insert_characters(
     uint32_t n   // number of characters
 );
 
+// IND - index: down a line, scrolling the region at the bottom margin.
+// Unlike vt_term_nl, never returns to column 0.
+void vt_term_index(
+    vt_term_t *t // The terminal
+);
+
 // ESC M - reverse index / reverse new line
 void vt_term_reverse_nl(
     vt_term_t *t // The terminal

@@ -49,7 +49,7 @@ void vt_pallet_make_256_colours(
         {255,255,85 }, // Bright Yellow
         {85, 85, 255}, // Bright Blue
         {255,85, 255}, // Bright Magenta
-        {255,255,0  }, // Bright Cyan
+        {85, 255,255}, // Bright Cyan
         {255,255,255}, // Bright White
     };
 
@@ -91,4 +91,47 @@ void vt_pallet_make_256_colours(
             l
         );
     }
+}
+
+// Index (0-5) of the nearest colour cube level (0, 95, 135, 175, 215, 255)
+static uint32_t vt_pallet_cube_index(uint32_t v) {
+    return v < 48 ? 0 : v < 115 ? 1 : (v - 35) / 40;
+}
+
+static uint32_t vt_pallet_cube_level(uint32_t i) {
+    return i ? i * 40 + 55 : 0;
+}
+
+static uint32_t vt_pallet_dist2(uint32_t r1, uint32_t g1, uint32_t b1, uint32_t r2, uint32_t g2, uint32_t b2) {
+    const int32_t dr = (int32_t)r1 - (int32_t)r2;
+    const int32_t dg = (int32_t)g1 - (int32_t)g2;
+    const int32_t db = (int32_t)b1 - (int32_t)b2;
+    return (uint32_t)(dr * dr + dg * dg + db * db);
+}
+
+vt_cell_colour_t vt_pallet_rgb_to_256(
+    uint32_t r,
+    uint32_t g,
+    uint32_t b
+) {
+    if (r > 255) r = 255;
+    if (g > 255) g = 255;
+    if (b > 255) b = 255;
+
+    // Nearest colour in the cube
+    const uint32_t ri = vt_pallet_cube_index(r);
+    const uint32_t gi = vt_pallet_cube_index(g);
+    const uint32_t bi = vt_pallet_cube_index(b);
+    const uint32_t cr = vt_pallet_cube_level(ri);
+    const uint32_t cg = vt_pallet_cube_level(gi);
+    const uint32_t cb = vt_pallet_cube_level(bi);
+
+    // Nearest grey in the ramp (8, 18, ... 238)
+    const uint32_t a = (r + g + b) / 3;
+    const uint32_t yi = a < 8 ? 0 : a > 238 ? 23 : (a - 3) / 10;
+    const uint32_t y = yi * 10 + 8;
+
+    const uint32_t dc = vt_pallet_dist2(r, g, b, cr, cg, cb);
+    const uint32_t dy = vt_pallet_dist2(r, g, b, y, y, y);
+    return (vt_cell_colour_t)(dy < dc ? 232 + yi : 16 + ri * 36 + gi * 6 + bi);
 }

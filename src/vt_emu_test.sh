@@ -7,4 +7,5 @@
  vt_term.c \
  vt_emu_test.c \
  vt_tabs.c \
+ vt_pallet.c \
  && ./a.out 

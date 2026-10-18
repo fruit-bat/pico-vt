@@ -541,7 +541,7 @@ void vt_term_reverse_nl(
     }
 }
 
-void vt_term_nl(
+void vt_term_index(
     vt_term_t *t // The terminal
 ) {
     t->wrap = false;
@@ -552,6 +552,12 @@ void vt_term_nl(
     else if (t->r < (t->h - 1)) {
         t->r++;
     }
+}
+
+void vt_term_nl(
+    vt_term_t *t // The terminal
+) {
+    vt_term_index(t);
     if (t->flags & VT_TERM_MODE_LNM) {
         t->c = 0;
     }
