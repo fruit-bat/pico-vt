@@ -102,6 +102,11 @@ typedef enum {
     VT_A_DECSTBM,     // Set Top and Bottom Margins
     VT_A_DA,          // Device Attributes
     VT_A_DSR,         // Device Status Report
+    VT_A_IL,          // IL  - Insert lines
+    VT_A_DL,          // DL  - Delete lines
+    VT_A_DCH,         // DCH - Delete characters
+    VT_A_ECH,         // ECH - Erase characters
+    VT_A_VPA,         // VPA - Vertical position absolute
     VT_A_RM,          // Reset Mode
     VT_A_SM,          // Set Mode
     VT_A_SU,          // Scroll Up

@@ -254,6 +254,26 @@ void vt_term_delete_characters(
     uint32_t n    // The number of characters to delete (note: 0 means 0)
 );
 
+// ECH - erase characters from the cursor without moving the rest of the line
+void vt_term_erase_characters(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of characters to erase (note: 0 means 0)
+);
+
+// IL - insert blank lines at the cursor row, pushing lines below it down
+// within the scroll region. Does nothing outside the region.
+void vt_term_insert_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to insert (note: 0 means 0)
+);
+
+// DL - delete lines at the cursor row, pulling lines below it up within
+// the scroll region. Does nothing outside the region.
+void vt_term_delete_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to delete (note: 0 means 0)
+);
+
 void vt_term_clear_screen(
     vt_term_t *t // The terminal
 );

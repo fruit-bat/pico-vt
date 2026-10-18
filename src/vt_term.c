@@ -415,6 +415,45 @@ void vt_term_delete_characters(
     // The cells freed at the end of the line are erased (as xterm)
     vt_term_clear_line(t, t->r, to, t->w);
 }
+
+void vt_term_erase_characters(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of characters to erase (note: 0 means 0)
+)
+{
+    t->wrap = false;
+    if (n > t->w - t->c)
+        n = t->w - t->c;
+    vt_term_clear_line(t, t->r, t->c, t->c + n);
+}
+
+// Lines are only inserted or deleted inside the scroll region; the cursor moves to column 0
+static bool vt_term_line_edit_start(
+    vt_term_t *t // The terminal
+) {
+    t->wrap = false;
+    if (t->r < t->mt || t->r > t->mb) return false;
+    t->c = 0;
+    return true;
+}
+
+void vt_term_insert_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to insert (note: 0 means 0)
+)
+{
+    if (!vt_term_line_edit_start(t)) return;
+    vt_term_scroll_down(t, t->r, n > t->h ? t->h : n);
+}
+
+void vt_term_delete_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to delete (note: 0 means 0)
+)
+{
+    if (!vt_term_line_edit_start(t)) return;
+    vt_term_scroll_up(t, t->r, n > t->h ? t->h : n);
+}
 /**
  * @brief Erases part or all of the current line in the terminal based on the specified mode.
  *

@@ -497,10 +497,40 @@ void vt_emu_put_ch(
         vt_term_erase_in_line(t, n);
         break;
     }
-    case VT_A_ICH: {         // EL  - Insert characters
-        const uint32_t n = vt_emu_get_p0(p, 0);
+    case VT_A_ICH: {         // ICH - Insert characters
+        const uint32_t n = vt_emu_get_p1(p, 0);
         DEBUG("VT_A_ICH %lu\n", (ul)n);
         vt_term_insert_characters(t, n);
+        break;
+    }
+    case VT_A_DCH: {         // DCH - Delete characters
+        const uint32_t n = vt_emu_get_p1(p, 0);
+        DEBUG("VT_A_DCH %lu\n", (ul)n);
+        vt_term_delete_characters(t, n);
+        break;
+    }
+    case VT_A_ECH: {         // ECH - Erase characters
+        const uint32_t n = vt_emu_get_p1(p, 0);
+        DEBUG("VT_A_ECH %lu\n", (ul)n);
+        vt_term_erase_characters(t, n);
+        break;
+    }
+    case VT_A_IL: {          // IL  - Insert lines
+        const uint32_t n = vt_emu_get_p1(p, 0);
+        DEBUG("VT_A_IL %lu\n", (ul)n);
+        vt_term_insert_lines(t, n);
+        break;
+    }
+    case VT_A_DL: {          // DL  - Delete lines
+        const uint32_t n = vt_emu_get_p1(p, 0);
+        DEBUG("VT_A_DL %lu\n", (ul)n);
+        vt_term_delete_lines(t, n);
+        break;
+    }
+    case VT_A_VPA: {         // VPA - Vertical position absolute
+        const uint32_t r = vt_emu_get_p1(p, 0);
+        DEBUG("VT_A_VPA %lu\n", (ul)r);
+        vt_term_cursor_set_row(t, r - 1);
         break;
     }
     case VT_A_SGR: {        // Select Graphic Rendition

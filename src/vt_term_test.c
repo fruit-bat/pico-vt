@@ -75,6 +75,8 @@ static void check_rows_blank(vt_term_t *t, vt_coord_t from, vt_coord_t to) {
     for (vt_coord_t r = from; r < to; ++r) check_grid_row(t, r, BLANK);
 }
 
+static void set_wrap_pending_row5(vt_term_t *t);
+
 typedef void (*scroll_fn_t)(vt_term_t *t, vt_coord_t rs, vt_coord_t n);
 
 void test_scroll(vt_term_t *t) {
@@ -191,6 +193,100 @@ void test_delete_characters(vt_term_t *t) {
     printf("\nDelete characters\n");
     run_row_edit_cases(t, vt_term_delete_characters, cases, ARRAY_LEN(cases));
     // Attributes of the freed cells are checked in test_erase_uses_current_attr
+}
+
+void test_erase_characters(vt_term_t *t) {
+    static const row_edit_case_t cases[] = {
+        { 7,     3,   "ABCDEFG   KLMNOPQRST" },
+        { 7,     300, "ABCDEFG             " },
+        { 0,     W,   BLANK },
+        { W - 1, 1,   "ABCDEFGHIJKLMNOPQRS " },
+        { 7,     0,   COLS },
+    };
+    printf("\nErase characters\n");
+    run_row_edit_cases(t, vt_term_erase_characters, cases, ARRAY_LEN(cases));
+    // The cursor does not move
+    assert(t->r == 5 && t->c == 7);
+}
+
+void test_insert_delete_lines(vt_term_t *t) {
+    printf("\nInsert and delete lines\n");
+
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_insert_lines(t, 2);
+    print_grid(t);
+    check_cursor(t, 5, 0, false);
+    check_grid_rows(t, "ABCDE  FGHIJKLMN");
+
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_delete_lines(t, 2);
+    print_grid(t);
+    check_cursor(t, 5, 0, false);
+    check_grid_rows(t, "ABCDEHIJKLMNOP  ");
+
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_insert_lines(t, 100);
+    check_grid_rows(t, "ABCDE           ");
+
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_delete_lines(t, 100);
+    check_grid_rows(t, "ABCDE           ");
+
+    set_grid_rows(t);
+    vt_term_insert_lines(t, 0);
+    vt_term_delete_lines(t, 0);
+    check_grid_rows(t, ROWS);
+
+    // Within the margins only the scroll region moves
+    set_margins(t);
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 3);
+    vt_term_insert_lines(t, 2);
+    print_grid(t);
+    check_grid_rows(t, "ABCDE  FGHIJMNOP");
+
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 3);
+    vt_term_delete_lines(t, 2);
+    print_grid(t);
+    check_grid_rows(t, "ABCDEHIJKL  MNOP");
+
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 3);
+    vt_term_insert_lines(t, 100);
+    check_grid_rows(t, "ABCDE       MNOP");
+
+    // Outside the scroll region nothing happens and the cursor stays put
+    set_grid_rows(t);
+    vt_term_cursor_set(t, MT - 1, 3);
+    vt_term_insert_lines(t, 1);
+    vt_term_delete_lines(t, 1);
+    check_cursor(t, MT - 1, 3, false);
+    vt_term_cursor_set(t, MB + 1, 3);
+    vt_term_insert_lines(t, 1);
+    vt_term_delete_lines(t, 1);
+    check_cursor(t, MB + 1, 3, false);
+    check_grid_rows(t, ROWS);
+
+    clear_margins(t);
+
+    // A pending wrap is cancelled and the edit happens on the written row
+    set_wrap_pending_row5(t);
+    vt_term_insert_lines(t, 1);
+    print_grid(t);
+    check_cursor(t, 5, 0, false);
+    check_grid_row(t, 5, BLANK);
+    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRSx");
+
+    set_wrap_pending_row5(t);
+    vt_term_delete_lines(t, 1);
+    check_cursor(t, 5, 0, false);
+    check_grid_row(t, 5, COLS);
+    check_grid_row(t, H - 1, BLANK);
 }
 
 void test_erase_in_line(vt_term_t *t) {
@@ -507,6 +603,7 @@ void test_wrap_pending_edits(vt_term_t *t) {
         { vt_term_erase_in_line,     2, BLANK },
         { vt_term_delete_characters, 1, "ABCDEFGHIJKLMNOPQRS " },
         { vt_term_insert_characters, 1, "ABCDEFGHIJKLMNOPQRS " },
+        { vt_term_erase_characters,  1, "ABCDEFGHIJKLMNOPQRS " },
     };
     for (size_t i = 0; i < ARRAY_LEN(cases); ++i) {
         set_wrap_pending_row5(t);
@@ -1069,6 +1166,8 @@ int main() {
     test_insert_characters(&t);
     test_delete_characters(&t);
     test_erase_in_line(&t);
+    test_erase_characters(&t);
+    test_insert_delete_lines(&t);
     test_putch(&t);
     test_reverse_nl(&t);
     test_nl(&t);

@@ -734,6 +734,55 @@ void test_replies(vt_emu_t* e) {
     vt_emu_set_reply(e, NULL, NULL);
 }
 
+void test_line_and_char_edits(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test line and character edits\n");
+    // IL and DL (default 1)
+    set_grid_rows(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[6;8H\033[L");
+    print_grid(t);
+    assert(t->r == 5 && t->c == 0);
+    check_grid_rows(t, "ABCDE FGHIJKLMNO");
+    vt_emu_put_str(e, (vt_char_t*)"\033[2M");
+    print_grid(t);
+    check_grid_rows(t, "ABCDEGHIJKLMNO  ");
+
+    // ICH, DCH and ECH (default 1)
+    set_grid_cols(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[1;6H\033[@");
+    check_grid_row(t, 0, "ABCDE FGHIJKLMNOPQRS");
+    set_grid_cols(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[P");
+    check_grid_row(t, 0, "ABCDEGHIJKLMNOPQRST ");
+    vt_emu_put_str(e, (vt_char_t*)"\033[2P");
+    check_grid_row(t, 0, "ABCDEIJKLMNOPQRST   ");
+    set_grid_cols(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[X");
+    check_grid_row(t, 0, "ABCDE GHIJKLMNOPQRST");
+    vt_emu_put_str(e, (vt_char_t*)"\033[3X");
+    check_grid_row(t, 0, "ABCDE   IJKLMNOPQRST");
+    assert(t->r == 0 && t->c == 5);
+
+    // VPA (default 1) and HPA
+    vt_emu_put_str(e, (vt_char_t*)"\033[9d");
+    assert(t->r == 8 && t->c == 5);
+    vt_emu_put_str(e, (vt_char_t*)"\033[d");
+    assert(t->r == 0 && t->c == 5);
+    vt_emu_put_str(e, (vt_char_t*)"\033[100d");
+    assert(t->r == t->h - 1 && t->c == 5);
+    vt_emu_put_str(e, (vt_char_t*)"\033[7`");
+    assert(t->r == t->h - 1 && t->c == 6);
+
+    // VPA is relative to the margins in origin mode
+    vt_emu_put_str(e, (vt_char_t*)"\033[5;10r\033[?6h\033[2d");
+    assert(t->r == 5);
+    vt_emu_put_str(e, (vt_char_t*)"\033[100d");
+    assert(t->r == 9);
+    vt_emu_put_str(e, (vt_char_t*)"\033[?6l\033[r");
+}
+
 int main() {
 
     const vt_coord_t w = 20;
@@ -752,6 +801,7 @@ int main() {
     test_private_sequences(&e);
     test_modes(&e);
     test_replies(&e);
+    test_line_and_char_edits(&e);
     test_repeat_character(&e);
     test_horizontal_tabs(&e);
     // test_stdin(&e);

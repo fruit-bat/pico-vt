@@ -179,11 +179,17 @@ const vt_state_t vt_states_csi_f[] = {
     {'I',          VT_A_CHT,          VT_F_FINAL}, // ESC [nI          - Horizonal tab forward
     {'J',          VT_A_ED,           VT_F_FINAL}, // ESC [nJ
     {'K',          VT_A_EL,           VT_F_FINAL}, // ESC [nK
+    {'L',          VT_A_IL,           VT_F_FINAL}, // ESC [nL          - Insert lines
+    {'M',          VT_A_DL,           VT_F_FINAL}, // ESC [nM          - Delete lines
+    {'P',          VT_A_DCH,          VT_F_FINAL}, // ESC [nP          - Delete characters
     {'S',          VT_A_SU,           VT_F_FINAL}, // ESC [nS
     {'T',          VT_A_SD,           VT_F_FINAL}, // ESC [nT
+    {'X',          VT_A_ECH,          VT_F_FINAL}, // ESC [nX          - Erase characters
     {'Z',          VT_A_HTB,          VT_F_FINAL}, // ESC [nZ          - Horizontal tab backward
+    {'`',          VT_A_CHA,          VT_F_FINAL}, // ESC [n`          - HPA, same as CHA
     {'b',          VT_A_REP,          VT_F_FINAL}, // ESC [nr          - Repeat character
     {'c',          VT_A_DA,           VT_F_FINAL}, // ESC [c           - Device attributes
+    {'d',          VT_A_VPA,          VT_F_FINAL}, // ESC [nd          - Vertical position absolute
     {'f',          VT_A_HVP,          VT_F_FINAL}, // ESC [nf
     {'g',          VT_A_HTC,          VT_F_FINAL}, // ESC [ng          - Clear horizontal tabs
     {'h',          VT_A_SM,           VT_F_FINAL}, // ESC [?n;h
