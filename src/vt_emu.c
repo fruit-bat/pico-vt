@@ -225,6 +225,34 @@ static void vt_emu_sgr(vt_emu_t* const e) {
     }
 }
 
+// SM/RM - set or reset the modes listed in the parameters
+static void vt_emu_set_modes(
+    vt_emu_t *e,
+    bool on
+) {
+    vt_term_t* const t = &e->term;
+    vt_parser_t* const p = &e->parser;
+    for (uint32_t i = 0; i < p->n_params; ++i) {
+        uint32_t mode = 0;
+        if (p->prefix == '?') {
+            // DEC private modes
+            switch (p->params[i]) {
+                case 6: mode = VT_TERM_MODE_ORIGIN; break;   // DECOM
+                case 7: mode = VT_TERM_MODE_AUTOWRAP; break; // DECAWM
+            }
+        }
+        else {
+            // ANSI modes
+            switch (p->params[i]) {
+                case 4: mode = VT_TERM_MODE_INSERT; break;   // IRM
+                case 20: mode = VT_TERM_MODE_LNM; break;     // LNM
+            }
+        }
+        DEBUG("VT_A_SM/RM %c%lu %d\n", p->prefix ? p->prefix : ' ', (ul)p->params[i], on);
+        if (mode) vt_term_mode_set(t, mode, on);
+    }
+}
+
 void vt_emu_put_ch(
     vt_emu_t *e, 
     vt_char_t ch
@@ -234,6 +262,15 @@ void vt_emu_put_ch(
     vt_term_t* const t = &e->term;
     vt_parser_t* const p = &e->parser;
     DEBUG("Action %d\n", a);
+    // Ignore private variants (e.g. ESC [ > c) of sequences that are not supported.
+    // DECSED/DECSEL (ESC [ ? J/K) act as ED/EL as there are no protected characters.
+    if (p->prefix && !(
+        ((a == VT_A_SM || a == VT_A_RM) && p->prefix == '?') ||
+        ((a == VT_A_ED || a == VT_A_EL) && p->prefix == '?')
+    )) {
+        DEBUG("Ignored private sequence %c action %d\n", p->prefix, a);
+        return;
+    }
     switch(a) {
     case VT_A_CHAR:        // A character is ready
         DEBUG("VT_A_CHAR (%d)\n", p->ch);
@@ -281,15 +318,10 @@ void vt_emu_put_ch(
         break;
     }
     case VT_A_C0_LF:       // Line Feed
-        DEBUG("VT_A_C0_LF\n");
-        vt_term_nl(t);
-        vt_term_cr(t);
-        break;
-    case VT_A_C0_VT:       // Vertical Tab
-        DEBUG("\n");
-        break;
-    case VT_A_C0_FF:       // Form Feed
-        DEBUG("VT_A_C0_VT\n");
+    case VT_A_C0_VT:       // Vertical Tab (as LF, like xterm)
+    case VT_A_C0_FF:       // Form Feed (as LF, like xterm)
+        DEBUG("VT_A_C0_LF/VT/FF\n");
+        vt_term_nl(t);     // Also does a CR in LNM mode
         break;
     case VT_A_C0_CR:       // Carriage Return
         DEBUG("VT_A_C0_CR\n");
@@ -446,20 +478,22 @@ void vt_emu_put_ch(
         break;
     }
     case VT_A_DECSTBM: {    // Set Top and Bottom Margins
+        // A missing or 0 bottom, or one past the screen, means the last row
         const uint32_t mt = vt_emu_get_p1(p, 0) - 1;
-        const uint32_t mb = p->n_params > 1 ? vt_emu_get_p1(p, 1) - 1 : t->h - 1;
+        const uint32_t b = vt_emu_get_p0(p, 1);
+        const uint32_t mb = (b == 0 || b > t->h) ? t->h - 1 : b - 1;
         DEBUG("VT_A_DECSTBM %lu, %lu\n", (ul)mt, (ul)mb);
-        vt_term_margin_set(t, mt, mb);
+        if (mt < mb) vt_term_margin_set(t, mt, mb);
         break;
     }
     case VT_A_DA:          // Device Attributes
         DEBUG("VT_A_DA\n");
         break;
     case VT_A_RM:          // Reset Mode
-        DEBUG("VT_A_RM\n");
+        vt_emu_set_modes(e, false);
         break;
     case VT_A_SM:          // Set Mode
-        DEBUG("VT_A_SM\n");
+        vt_emu_set_modes(e, true);
         break;
     case VT_A_SU: {         // Scroll Up
         const uint32_t n = vt_emu_get_p1(p, 0);

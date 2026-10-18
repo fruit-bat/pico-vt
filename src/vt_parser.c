@@ -154,6 +154,10 @@ const vt_state_t vt_states_esc[] = {
 const vt_state_t vt_states_csi[] = {
     {'s',          VT_A_SAVE_CUR,     VT_F_FINAL},   // ESC [s
     {'u',          VT_A_RESTORE_CUR,  VT_F_FINAL},   // ESC [u
+    {'?',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [? (DEC private)
+    {'>',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [>
+    {'=',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [=
+    {'<',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [<
     {VT_M_DIGIT,   VT_G_CSI_P,        VT_F_NXT_P|VT_F_COL_P|VT_F_NEXT_CH}, // ESC [0-9
     {';',          VT_G_CSI_P,        VT_F_NXT_P},
     {VT_M_CHAR,    VT_G_CSI_F,        VT_F_NONE},    // ESC [c
@@ -274,6 +278,7 @@ const uint8_t vt_state_grp_len[] = {
 void vt_parser_reset(vt_parser_t *p) {
     p->state = NULL;
     p->n_params = 0;
+    p->prefix = 0;
     p->osc_param_len = 0;
 }
 
@@ -302,6 +307,7 @@ const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
     vt_g_t g = ps && !(ps->f & VT_F_FINAL) ? (vt_g_t)ps->n : VT_G_GROUND;
     if (g == VT_G_GROUND) {
         p->n_params = 0;
+        p->prefix = 0;
         p->osc_param_len = 0;
         p->osc_param[0] = 0;
     }
@@ -314,6 +320,9 @@ const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
             p->state = s;
             if (s->f & VT_F_COL_CH) {
                 p->ch = ch;
+            }
+            if (s->f & VT_F_COL_PFX) {
+                p->prefix = ch;
             }
             if (s->f & VT_F_COL_OSC) {
                 if (p->osc_param_len + 2 < COUNT_ARR(p->osc_param)) {

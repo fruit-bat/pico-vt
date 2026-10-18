@@ -130,6 +130,7 @@ typedef enum {
     VT_F_NXT_P   = 0x08, // Next parameter
     VT_F_COL_CH  = 0x10, // Collect a character
     VT_F_COL_OSC = 0x20, // Collect OSC string
+    VT_F_COL_PFX = 0x40, // Collect a CSI private prefix character (? > = <)
 } vt_f_t;   
 
 typedef struct {
@@ -142,6 +143,7 @@ typedef struct {
     const vt_state_t* state;       // Current state
     uint32_t params[16];           // Parameters collected
     uint8_t n_params;              // Number of parameters collected
+    vt_char_t prefix;              // CSI private prefix (e.g. '?'), 0 if none
     vt_char_t ch;
     vt_char_t osc_param[128];      // Control sequences & title
     uint8_t osc_param_len;

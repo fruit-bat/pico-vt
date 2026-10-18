@@ -53,6 +53,21 @@ void vt_term_margin_set(
     if (mt >= mb || mb >= t->h) return;
     t->mt = mt;
     t->mb = mb;
+    // DECSTBM homes the cursor (to the top margin in origin mode)
+    vt_term_cursor_set(t, 0, 0);
+}
+
+void vt_term_mode_set(
+    vt_term_t* t,  // The terminal
+    uint32_t mode, // The mode(s)
+    bool on        // Set or reset
+) {
+    if (on) t->flags |= mode;
+    else t->flags &= ~mode;
+    // Changing origin mode homes the cursor
+    if (mode & VT_TERM_MODE_ORIGIN) vt_term_cursor_set(t, 0, 0);
+    // Without auto wrap there is nothing to wrap
+    if (!(t->flags & VT_TERM_MODE_AUTOWRAP)) t->wrap = false;
 }
 
 static void vt_term_clear_line(
@@ -103,23 +118,29 @@ void vt_term_putch(
         vt_term_nl(t);
     }
 
+    if (t->flags & VT_TERM_MODE_INSERT) {
+        // Make room, losing the character at the end of the line
+        vt_term_insert_characters(t, 1);
+    }
+
     t->rp[t->r][t->c] = vt_cell_combine(t->attr, ch);
 
     if (t->c < t->w - 1) {
         t->c++;
     }
-    else {
+    else if (t->flags & VT_TERM_MODE_AUTOWRAP) {
         // Stay in the last column until the next character arrives
         t->wrap = true;
     }
+    // Else without auto wrap, further characters overwrite the last column
 }
 
 
 void vt_term_reset(
     vt_term_t* t  // The terminal
 ) {
-    // Clear down any flags
-    t->flags = 0;
+    // Default modes
+    t->flags = VT_TERM_MODES_DEFAULT;
 
     // Clear the deferred wrap
     t->wrap = false;
@@ -148,6 +169,7 @@ void vt_term_save_cursor(
     t->s_r = t->r;
     t->s_c = t->c;
     t->s_attr = t->attr;
+    t->s_origin = vt_term_mode_get(t, VT_TERM_MODE_ORIGIN);
 }
 
 void vt_term_restore_cursor(
@@ -157,6 +179,9 @@ void vt_term_restore_cursor(
     t->r = t->s_r;
     t->c = t->s_c;
     t->attr = t->s_attr;
+    // Restore origin mode without homing the cursor
+    if (t->s_origin) t->flags |= VT_TERM_MODE_ORIGIN;
+    else t->flags &= ~VT_TERM_MODE_ORIGIN;
 }
 
 void vt_term_init(
@@ -185,9 +210,8 @@ void vt_term_cursor_set(
     vt_coord_t r,
     vt_coord_t c
 ) {
-    t->wrap = false;
-    t->r = MIN(r, t->h - 1);
-    t->c = MIN(c, t->w - 1);
+    vt_term_cursor_set_row(t, r);
+    vt_term_cursor_set_col(t, c);
 }
 
 void vt_term_cursor_set_col(
@@ -203,7 +227,14 @@ void vt_term_cursor_set_row(
     vt_coord_t r
 ) {
     t->wrap = false;
-    t->r = MIN(r, t->h - 1);
+    if (t->flags & VT_TERM_MODE_ORIGIN) {
+        // Relative to the top margin and kept within the margins
+        uint32_t rr = (uint32_t)r + t->mt;
+        t->r = rr > t->mb ? t->mb : rr;
+    }
+    else {
+        t->r = MIN(r, t->h - 1);
+    }
 }
 
 void vt_term_scroll_up(
@@ -475,6 +506,9 @@ void vt_term_nl(
     else if (t->r < (t->h - 1)) {
         t->r++;
     }
+    if (t->flags & VT_TERM_MODE_LNM) {
+        t->c = 0;
+    }
 }
 
 void vt_term_cr(
@@ -484,20 +518,24 @@ void vt_term_cr(
     t->c = 0;
 }
 
+// Moving down stops at the bottom margin, unless already below it
 void vt_term_cursor_down(
     vt_term_t *t,
     vt_coord_t n
 ) {
     t->wrap = false;
-    t->r = t->r + n >= t->h ? t->h - 1 : t->r + n;
+    vt_coord_t b = t->r <= t->mb ? t->mb : t->h - 1;
+    t->r = b - t->r > n ? t->r + n : b;
 }
 
+// Moving up stops at the top margin, unless already above it
 void vt_term_cursor_up(
     vt_term_t *t,
     vt_coord_t n
 ) {
     t->wrap = false;
-    t->r = t->r >= n ? t->r - n : 0;
+    vt_coord_t b = t->r >= t->mt ? t->mt : 0;
+    t->r = t->r - b > n ? t->r - n : b;
 }
 
 void vt_term_cursor_left(
@@ -520,16 +558,14 @@ void vt_term_next_line_down(
     vt_term_t *t,
     vt_coord_t n
 ) {
-    t->wrap = false;
+    vt_term_cursor_down(t, n);
     t->c = 0;
-    t->r = t->r + n >= t->h ? t->h - 1 : t->r + n;
 }
 
 void vt_term_next_line_up(
     vt_term_t *t,
     vt_coord_t n
 ) {
-    t->wrap = false;
+    vt_term_cursor_up(t, n);
     t->c = 0;
-    t->r = t->r >= n ? t->r - n : 0;
 }

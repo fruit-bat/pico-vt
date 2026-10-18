@@ -41,6 +41,13 @@ extern "C"
 #define VT_TERM_DEFAULT_FG 1
 #define VT_TERM_DEFAULT_FLAGS VT_CELL_FLAGS_NORMAL
 
+// Terminal modes, held in vt_term_t.flags and set with vt_term_mode_set()
+#define VT_TERM_MODE_AUTOWRAP (1u << 0) // DECAWM (?7) wrap at the right margin
+#define VT_TERM_MODE_ORIGIN   (1u << 1) // DECOM  (?6) cursor rows relative to the margins
+#define VT_TERM_MODE_INSERT   (1u << 2) // IRM    (4)  insert characters rather than overwrite
+#define VT_TERM_MODE_LNM      (1u << 3) // LNM    (20) LF, VT and FF also do a CR
+#define VT_TERM_MODES_DEFAULT VT_TERM_MODE_AUTOWRAP
+
 // VT100-derived terminals have a deferred wrap behavior: writing a
 // character in the last column leaves the cursor in that column and sets
 // a "wrap pending" flag instead of moving to the next line.  This allows
@@ -64,17 +71,33 @@ typedef struct
     vt_coord_t s_r; // Cursor row
     vt_coord_t s_c; // Cursor column    
     vt_cell_attr_t s_attr; // The current attributes
+    bool s_origin; // Saved origin mode
     bool wrap; // Wrap pending (deferred wrap at the last column)
-    uint32_t flags;
+    uint32_t flags; // Modes (VT_TERM_MODE_xxx)
     vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers
 
 } vt_term_t;
 
+// DECSTBM - set the scroll region and home the cursor (ignored if invalid)
 void vt_term_margin_set(
     vt_term_t* t, // The terminal
     vt_coord_t mt, // Margin top row
     vt_coord_t mb // Margin bottom row
 );
+
+// Set or reset one or more modes (VT_TERM_MODE_xxx)
+void vt_term_mode_set(
+    vt_term_t* t,  // The terminal
+    uint32_t mode, // The mode(s)
+    bool on        // Set or reset
+);
+
+static inline bool vt_term_mode_get(
+    const vt_term_t* t, // The terminal
+    uint32_t mode       // The mode
+) {
+    return (t->flags & mode) != 0;
+}
 
 void vt_term_init(
     vt_term_t* t, // The terminal

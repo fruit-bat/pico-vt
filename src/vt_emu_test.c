@@ -511,6 +511,102 @@ void test_margin(vt_emu_t* e) {
     vt_emu_put_str(e, (vt_char_t*)"\033[r");
     assert(t->mt == 0);
     assert(t->mb == t->h - 1);
+
+    // DECSTBM homes the cursor
+    vt_emu_put_str(e, (vt_char_t*)"\033[5;7H\033[3;8r");
+    assert(t->mt == 2 && t->mb == 7);
+    assert(t->r == 0 && t->c == 0);
+
+    // A 0 or out of range bottom means the last row
+    vt_emu_put_str(e, (vt_char_t*)"\033[2;0r");
+    assert(t->mt == 1 && t->mb == t->h - 1);
+    vt_emu_put_str(e, (vt_char_t*)"\033[3;100r");
+    assert(t->mt == 2 && t->mb == t->h - 1);
+
+    // Invalid margins are ignored and the cursor stays put
+    vt_emu_put_str(e, (vt_char_t*)"\033[5;7H\033[8;8r\033[9;3r\033[100;200r");
+    assert(t->mt == 2 && t->mb == t->h - 1);
+    assert(t->r == 4 && t->c == 6);
+
+    // Cursor up/down stop at the margins
+    vt_emu_put_str(e, (vt_char_t*)"\033[3;8r\033[5;7H\033[100A");
+    assert(t->r == 2 && t->c == 6);
+    vt_emu_put_str(e, (vt_char_t*)"\033[100B");
+    assert(t->r == 7 && t->c == 6);
+
+    vt_emu_put_str(e, (vt_char_t*)"\033[r");
+}
+
+void test_private_sequences(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test private sequences are not printed\n");
+    // Hide/show cursor, alternate screen, bracketed paste and DA2 are not supported
+    vt_emu_put_str(e, (vt_char_t*)"\033[?25lA\033[?25h\033[?1049h\033[?2004hB\033[>cC");
+    print_grid(t);
+    check_grid_row(t, 0, "ABC                 ");
+
+    // Unsupported private variants are ignored rather than treated as the plain sequence
+    vt_emu_put_str(e, (vt_char_t*)"\033[?1m\033[>4;1m\033[?s");
+    assert(t->attr == vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS));
+
+    // DECSEL acts as EL
+    vt_emu_put_str(e, (vt_char_t*)"\033[1;2H\033[?K");
+    check_grid_row(t, 0, "A                   ");
+}
+
+void test_modes(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test modes\n");
+    assert(t->flags == VT_TERM_MODES_DEFAULT);
+
+    // DECAWM off: overwrite the last column
+    vt_emu_put_str(e, (vt_char_t*)"\033[?7l\033[1;19Habcd");
+    check_grid_row(t, 0, "                  ad");
+    check_grid_row(t, 1, "                    ");
+    // DECAWM on: wrap
+    vt_emu_put_str(e, (vt_char_t*)"\033[?7h\033[1;19Habcd");
+    check_grid_row(t, 0, "                  ab");
+    check_grid_row(t, 1, "cd                  ");
+
+    // DECOM: cursor addressing relative to the margins
+    vt_emu_put_str(e, (vt_char_t*)"\033[5;10r\033[?6h");
+    assert(t->r == 4 && t->c == 0);
+    vt_emu_put_str(e, (vt_char_t*)"\033[2;3H");
+    assert(t->r == 5 && t->c == 2);
+    vt_emu_put_str(e, (vt_char_t*)"\033[100;3H");
+    assert(t->r == 9 && t->c == 2);
+    vt_emu_put_str(e, (vt_char_t*)"\033[?6l");
+    assert(t->r == 0 && t->c == 0);
+    vt_emu_put_str(e, (vt_char_t*)"\033[r");
+
+    // Several modes in one sequence
+    vt_emu_put_str(e, (vt_char_t*)"\033[?6;7l\033[4;20h");
+    assert(t->flags == (VT_TERM_MODE_INSERT | VT_TERM_MODE_LNM));
+    vt_emu_put_str(e, (vt_char_t*)"\033[4;20l\033[?7h");
+    assert(t->flags == VT_TERM_MODES_DEFAULT);
+
+    // IRM: insert rather than overwrite
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"abcd\r\033[4hxy\033[4lz");
+    check_grid_row(t, 0, "xyzbcd              ");
+
+    // LNM off: LF keeps the column, VT and FF act as LF
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"ab\nc\vd\fe");
+    check_grid_row(t, 0, "ab                  ");
+    check_grid_row(t, 1, "  c                 ");
+    check_grid_row(t, 2, "   d                ");
+    check_grid_row(t, 3, "    e               ");
+    // LNM on: LF also does CR
+    vt_emu_put_str(e, (vt_char_t*)"\033[20h\nf\033[20l");
+    check_grid_row(t, 4, "f                   ");
+    // CR LF works either way
+    vt_emu_put_str(e, (vt_char_t*)"\r\ng");
+    check_grid_row(t, 5, "g                   ");
 }
 
 void test_repeat_character(vt_emu_t* e) {
@@ -592,6 +688,8 @@ int main() {
     test_insert(&e);
     test_scroll(&e);
     test_margin(&e);
+    test_private_sequences(&e);
+    test_modes(&e);
     test_repeat_character(&e);
     test_horizontal_tabs(&e);
     // test_stdin(&e);

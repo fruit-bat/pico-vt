@@ -580,19 +580,184 @@ static vt_cell_colour_t cell_bg(vt_term_t *t, vt_coord_t r, vt_coord_t c) {
 
 void test_margin_set(vt_term_t *t) {
     printf("\nTesting margin set\n");
+    // Setting the margins homes the cursor
+    vt_term_cursor_set(t, 5, 7);
     vt_term_margin_set(t, 3, 9);
     assert(t->mt == 3 && t->mb == 9);
+    check_cursor(t, 0, 0, false);
 
-    // Invalid margins are ignored
+    // Invalid margins are ignored and leave the cursor alone
+    vt_term_cursor_set(t, 5, 7);
     vt_term_margin_set(t, 9, 9);
     assert(t->mt == 3 && t->mb == 9);
     vt_term_margin_set(t, 10, 9);
     assert(t->mt == 3 && t->mb == 9);
     vt_term_margin_set(t, 0, H);
     assert(t->mt == 3 && t->mb == 9);
+    check_cursor(t, 5, 7, false);
 
     vt_term_margin_set(t, 0, H - 1);
     assert(t->mt == 0 && t->mb == H - 1);
+}
+
+void test_cursor_moves_margins(vt_term_t *t) {
+    printf("\nTesting cursor moves stop at the margins\n");
+    set_margins(t);
+
+    // Inside the region, up and down stop at the margins
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_cursor_up(t, 100);
+    check_cursor(t, MT, 7, false);
+    vt_term_cursor_down(t, 100);
+    check_cursor(t, MB, 7, false);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_next_line_up(t, 100);
+    check_cursor(t, MT, 0, false);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_next_line_down(t, 100);
+    check_cursor(t, MB, 0, false);
+
+    // Short moves are unaffected
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_cursor_up(t, 3);
+    check_cursor(t, MT, 7, false);
+    vt_term_cursor_down(t, MB - MT);
+    check_cursor(t, MB, 7, false);
+
+    // Above the region, up stops at the top of the screen and down at the bottom margin
+    vt_term_cursor_set(t, MT - 1, 7);
+    vt_term_cursor_up(t, 100);
+    check_cursor(t, 0, 7, false);
+    vt_term_cursor_down(t, 100);
+    check_cursor(t, MB, 7, false);
+
+    // Below the region, down stops at the bottom of the screen and up at the top margin
+    vt_term_cursor_set(t, MB + 1, 7);
+    vt_term_cursor_down(t, 100);
+    check_cursor(t, H - 1, 7, false);
+    vt_term_cursor_up(t, 100);
+    check_cursor(t, MT, 7, false);
+
+    clear_margins(t);
+}
+
+void test_mode_autowrap(vt_term_t *t) {
+    printf("\nTesting auto wrap mode (DECAWM)\n");
+    assert(vt_term_mode_get(t, VT_TERM_MODE_AUTOWRAP));
+
+    // Without auto wrap, characters at the right margin overwrite the last column
+    vt_term_mode_set(t, VT_TERM_MODE_AUTOWRAP, false);
+    set_grid_cols(t);
+    vt_term_cursor_set(t, 5, W - 2);
+    put_str(t, "xyz");
+    print_grid(t);
+    check_cursor(t, 5, W - 1, false);
+    check_grid_row(t, 5, "ABCDEFGHIJKLMNOPQRxz");
+    check_grid_row(t, 6, COLS);
+
+    // Turning auto wrap off drops a pending wrap
+    vt_term_mode_set(t, VT_TERM_MODE_AUTOWRAP, true);
+    set_wrap_pending_row5(t);
+    vt_term_mode_set(t, VT_TERM_MODE_AUTOWRAP, false);
+    check_cursor(t, 5, W - 1, false);
+    vt_term_putch(t, 'y');
+    check_grid_row(t, 5, "ABCDEFGHIJKLMNOPQRSy");
+    check_grid_row(t, 6, COLS);
+
+    vt_term_mode_set(t, VT_TERM_MODE_AUTOWRAP, true);
+}
+
+void test_mode_origin(vt_term_t *t) {
+    printf("\nTesting origin mode (DECOM)\n");
+    set_margins(t);
+
+    // Setting origin mode homes the cursor to the top margin
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_mode_set(t, VT_TERM_MODE_ORIGIN, true);
+    check_cursor(t, MT, 0, false);
+
+    // Rows are relative to the top margin and kept within the margins
+    vt_term_cursor_set(t, 3, 4);
+    check_cursor(t, MT + 3, 4, false);
+    vt_term_cursor_set(t, 100, 100);
+    check_cursor(t, MB, W - 1, false);
+    vt_term_cursor_set_row(t, 0);
+    check_cursor(t, MT, W - 1, false);
+    vt_term_cursor_set_row(t, 100);
+    check_cursor(t, MB, W - 1, false);
+
+    // Setting the margins homes the cursor to the new top margin
+    vt_term_margin_set(t, 4, 8);
+    check_cursor(t, 4, 0, false);
+
+    // Save and restore cursor include origin mode
+    vt_term_cursor_set(t, 1, 2);
+    vt_term_save_cursor(t);
+    vt_term_mode_set(t, VT_TERM_MODE_ORIGIN, false);
+    vt_term_restore_cursor(t);
+    assert(vt_term_mode_get(t, VT_TERM_MODE_ORIGIN));
+    check_cursor(t, 5, 2, false);
+
+    // Resetting origin mode homes the cursor to the top of the screen
+    vt_term_mode_set(t, VT_TERM_MODE_ORIGIN, false);
+    check_cursor(t, 0, 0, false);
+    vt_term_cursor_set(t, 100, 100);
+    check_cursor(t, H - 1, W - 1, false);
+
+    // Restoring a cursor saved without origin mode turns it off
+    vt_term_save_cursor(t);
+    vt_term_mode_set(t, VT_TERM_MODE_ORIGIN, true);
+    vt_term_restore_cursor(t);
+    assert(!vt_term_mode_get(t, VT_TERM_MODE_ORIGIN));
+    check_cursor(t, H - 1, W - 1, false);
+
+    clear_margins(t);
+}
+
+void test_mode_insert(vt_term_t *t) {
+    printf("\nTesting insert mode (IRM)\n");
+    vt_term_mode_set(t, VT_TERM_MODE_INSERT, true);
+    set_grid_cols(t);
+    vt_term_cursor_set(t, 5, 3);
+    put_str(t, "xy");
+    print_grid(t);
+    check_cursor(t, 5, 5, false);
+    check_grid_row(t, 5, "ABCxyDEFGHIJKLMNOPQR");
+    check_grid_row(t, 6, COLS);
+
+    // In the last column the character just replaces the last one
+    vt_term_cursor_set(t, 5, W - 1);
+    vt_term_putch(t, 'z');
+    check_grid_row(t, 5, "ABCxyDEFGHIJKLMNOPQz");
+    assert(t->wrap);
+
+    vt_term_mode_set(t, VT_TERM_MODE_INSERT, false);
+    set_grid_cols(t);
+    vt_term_cursor_set(t, 5, 3);
+    put_str(t, "xy");
+    check_grid_row(t, 5, "ABCxyFGHIJKLMNOPQRST");
+}
+
+void test_mode_lnm(vt_term_t *t) {
+    printf("\nTesting line feed / new line mode (LNM)\n");
+    // By default LF keeps the column
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_nl(t);
+    check_cursor(t, 6, 7, false);
+
+    // In LNM mode LF also returns to column 0
+    vt_term_mode_set(t, VT_TERM_MODE_LNM, true);
+    vt_term_nl(t);
+    check_cursor(t, 7, 0, false);
+
+    // Including when it scrolls
+    set_grid_rows(t);
+    vt_term_cursor_set(t, H - 1, 7);
+    vt_term_nl(t);
+    check_cursor(t, H - 1, 0, false);
+    check_grid_rows(t, "BCDEFGHIJKLMNOP ");
+
+    vt_term_mode_set(t, VT_TERM_MODE_LNM, false);
 }
 
 void test_reset(vt_term_t *t) {
@@ -604,13 +769,13 @@ void test_reset(vt_term_t *t) {
     vt_term_flags_add(t, VT_CELL_FLAGS_BOLD);
     vt_term_cursor_set(t, 5, W - 1);
     vt_term_putch(t, 'x');
-    t->flags = 0x55;
+    vt_term_mode_set(t, VT_TERM_MODE_INSERT | VT_TERM_MODE_LNM, true);
 
     vt_term_reset(t);
     check_cursor(t, 0, 0, false);
     assert(t->mt == 0 && t->mb == H - 1);
     assert(t->attr == default_attr());
-    assert(t->flags == 0);
+    assert(t->flags == VT_TERM_MODES_DEFAULT);
     // The screen is cleared with the default attributes
     check_grid_blank(t);
     // The saved cursor is reset too
@@ -898,6 +1063,11 @@ int main() {
     test_margin_set(&t);
     test_save_restore_cursor(&t);
     test_cursor_moves(&t);
+    test_cursor_moves_margins(&t);
+    test_mode_autowrap(&t);
+    test_mode_origin(&t);
+    test_mode_insert(&t);
+    test_mode_lnm(&t);
     test_attributes(&t);
     test_erase_uses_current_attr(&t);
     test_erase_params(&t);
