@@ -154,6 +154,43 @@ OSC strings (e.g. window titles) are consumed and ignored. Unsupported private s
 `ESC [ > ...`) are ignored. As xterm, C0 controls within a sequence are executed without interrupting it,
 CAN and SUB abandon it and ESC starts a new one.
 
+## Desktop harness
+
+The harness runs ordinary terminal programs through the emulator on a PC (Linux or macOS), drawing the
+emulator's screen in your terminal with the Pico palette. It is a quick way to see how real programs
+(a shell, vim, less, top, nano, vttest...) behave before trying them on a Pico.
+
+```sh
+make harness
+build-test/vt_harness                      # your shell in an 80x24 emulator
+build-test/vt_harness -s 80x40 -- vim      # any program, any size up to 80x60
+```
+
+Keys go to the program and `Ctrl-]` quits. The status line under the screen shows the cursor position
+and modes (wrap pending, alternate screen, insert...). Your terminal needs to be at least one column and
+two rows bigger than the emulator.
+
+It can also be scripted, which is handy for checking a fix or reproducing a problem:
+
+```sh
+# Run vim headless, type into it and print the screen as text
+build-test/vt_harness -H -d -s 50x10 -K 700 -w 2500 -k 'iHello\e' -k ':set number\r' -- vim -u NONE
+```
+
+| Option | |
+|---|---|
+| `-s COLSxROWS` | Screen size (default 80x24) |
+| `-t TERM` | `TERM` for the program (default `xterm-256color`) |
+| `-A` | No alternate screen |
+| `-H` | Headless: don't draw or read the keyboard |
+| `-k KEYS` | Type `KEYS` (with `\r` `\n` `\t` `\e` `\\` `\xHH` escapes); may be repeated |
+| `-K MS` | Delay before and between each `-k` (default 500) |
+| `-w MS` | Stop after `MS` milliseconds |
+| `-d` | Print the screen as text when finished |
+
+[vttest](https://invisible-island.net/vttest/) (e.g. `apt install vttest`) is a good workout:
+`build-test/vt_harness -- vttest`.
+
 ## Tests
 
 The tests are plain C programs, one per module. Build and run them all, with AddressSanitizer and

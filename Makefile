@@ -2,6 +2,7 @@
 # Pico SDK through CMakeLists.txt).
 #
 #   make test             build and run every suite with ASan and UBSan
+#   make harness          build the desktop harness, build-test/vt_harness
 #   make test SANITIZE=   the same without the sanitizers
 #   make clean
 
@@ -26,7 +27,11 @@ vt_emu_SRCS     := vt_cell.c vt_tabs.c vt_term.c vt_term_test_utils.c vt_parser.
 
 BINS := $(addprefix $(BUILD)/,$(addsuffix _test,$(TESTS)))
 
-.PHONY: test clean
+# The desktop harness (tools/vt_harness.c)
+LIB_SRCS := vt_cell.c vt_tabs.c vt_term.c vt_parser.c vt_pallet.c vt_utf8.c vt_charmap.c vt_emu.c
+HARNESS_LIBS := $(if $(filter Darwin,$(shell uname -s)),,-lutil)
+
+.PHONY: test clean harness
 .SECONDEXPANSION:
 
 test: $(BINS)
@@ -38,6 +43,11 @@ test: $(BINS)
 
 $(BUILD)/%_test: $$(addprefix $(SRC)/,$$($$*_SRCS)) $(wildcard $(SRC)/*.h) | $(BUILD)
 	$(CC) $(CFLAGS) $(SANITIZE) -o $@ $(filter %.c,$^)
+
+harness: $(BUILD)/vt_harness
+
+$(BUILD)/vt_harness: tools/vt_harness.c $(addprefix $(SRC)/,$(LIB_SRCS)) $(wildcard $(SRC)/*.h) | $(BUILD)
+	$(CC) $(CFLAGS) $(SANITIZE) -I$(SRC) -o $@ $(filter %.c,$^) $(HARNESS_LIBS)
 
 $(BUILD):
 	mkdir -p $@
