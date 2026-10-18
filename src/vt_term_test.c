@@ -315,6 +315,27 @@ void test_insert_characters(vt_term_t *t) {
     print_grid( t);
     check_grid_row(t, 5, "ABCDE               ");
 
+    // Insert a full line's worth at column 0 (previously read/wrote out of bounds)
+    t->c = 0;
+    set_grid_cols(t);
+    vt_term_insert_characters(t, t->w);
+    print_grid( t);
+    check_grid_row(t, 5, "                    ");
+    check_grid_row(t, 4, "ABCDEFGHIJKLMNOPQRST");
+    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
+
+    t->c = 0;
+    set_grid_cols(t);
+    vt_term_insert_characters(t, 300);
+    print_grid( t);
+    check_grid_row(t, 5, "                    ");
+
+    t->c = 0;
+    set_grid_cols(t);
+    vt_term_insert_characters(t, t->w - 1);
+    print_grid( t);
+    check_grid_row(t, 5, "                   A");
+
     t->c = t->w - 1;
     set_grid_cols(t);
     vt_term_insert_characters(t, 1);
@@ -433,9 +454,54 @@ void test_putch(vt_term_t *t) {
     check_grid_row(t, 10, "LLLLLLLLLLLLLLLLLLLx");
     check_grid_row(t, 11, "yz                  ");
 
+    printf("\nTesting wrap below bottom margin\n");
+    // Wrapping on a row below the scroll region moves down a row without scrolling
+    t->r = t->mb + 2;
+    t->c = t->w - 1;
+    set_grid_rows(t);
+    vt_term_putch(t, 'x');
+    print_grid(t);
+    assert(t->r == t->mb + 3);
+    assert(t->c == 0);
+    assert(t->hang == VT_HANG_LINE);
+    vt_term_putch(t, 'y');
+    print_grid(t);
+    check_grid_rows(t, "ABCDEFGHIJKLM??P");
+    check_grid_row(t, 13, "NNNNNNNNNNNNNNNNNNNx");
+    check_grid_row(t, 14, "yOOOOOOOOOOOOOOOOOOO");
+
+    printf("\nTesting wrap on last row below bottom margin\n");
+    // On the last row below the scroll region, wrap to column 0 without scrolling
+    t->r = t->h - 1;
+    t->c = t->w - 1;
+    set_grid_rows(t);
+    vt_term_putch(t, 'x');
+    print_grid(t);
+    assert(t->r == t->h - 1);
+    assert(t->c == 0);
+    assert(t->hang == VT_HANG_NONE);
+    vt_term_putch(t, 'y');
+    print_grid(t);
+    check_grid_rows(t, "ABCDEFGHIJKLMNO?");
+    check_grid_row(t, 15, "yPPPPPPPPPPPPPPPPPPx");
+
     // Clear margins
     t->mt = 0;
     t->mb = t->h - 1;
+}
+
+void test_clear_screen_tall() {
+    printf("\nTesting clear screen with width < height\n");
+    // A terminal taller than it is wide (previously only cleared w rows)
+    const vt_coord_t w = 10;
+    const vt_coord_t h = 20;
+    vt_cell_t grid[h][w];
+    vt_term_t t;
+    vt_term_init(&t, (vt_cell_t*)grid, w, h);
+    set_grid_rows(&t);
+    vt_term_clear_screen(&t);
+    print_grid(&t);
+    check_grid_blank(&t);
 }
 
 void test_reverse_nl(vt_term_t *t) {
@@ -587,6 +653,7 @@ int main() {
     test_reverse_nl(&t);
     test_nl(&t);
     test_cr(&t);
+    test_clear_screen_tall();
 
     printf("all ok\n");
     return 0;

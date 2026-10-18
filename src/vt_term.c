@@ -89,7 +89,7 @@ static void vt_term_clear_lines(
 void vt_term_clear_screen(
     vt_term_t *t // The terminal
 ) {
-    vt_term_clear_lines(t, 0, t->w);
+    vt_term_clear_lines(t, 0, t->h);
 }
 
 // Write a character at the cursor
@@ -108,14 +108,16 @@ void vt_term_putch(
         t->c++;
     }
     else {
-        t->hang = VT_HANG_LINE;
         t->c = 0;
-        t->r++;
-    }
-
-    if ((t->hang != VT_HANG_NONE) && (t->r > t->mb)) {
-        t->r = t->mb;
-        t->hang = VT_HANG_BOTTOM;
+        if (t->r == t->mb) {
+            // At the bottom margin, scroll the region on the next character
+            t->hang = VT_HANG_BOTTOM;
+        }
+        else if (t->r < t->h - 1) {
+            t->hang = VT_HANG_LINE;
+            t->r++;
+        }
+        // Else on the last row below the scroll region: no scroll, wrap to column 0
     }
 }
 
@@ -343,14 +345,12 @@ void vt_term_insert_characters(
         n = t->w - t->c;
     if (n == 0)
         return;
-    vt_coord_t to = t->w - 1;
-    vt_coord_t fr = t->w - n - 1;
     vt_cell_t *rp = t->rp[t->r];
-    while (fr > t->c)
+    // Shift cells right from the end of the line; n > 0 so (to - n) never underflows
+    for (vt_coord_t to = t->w - 1; to >= t->c + n; --to)
     {
-        rp[to--] = rp[fr--];
+        rp[to] = rp[to - n];
     }
-    rp[to] = rp[fr];
     vt_term_clear_line(t, t->r, t->c, t->c + n);
 }
 
