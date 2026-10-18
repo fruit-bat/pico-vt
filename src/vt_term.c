@@ -212,8 +212,8 @@ void vt_term_scroll_up(
     vt_coord_t n   // Number of rows to scroll
 )
 {
-    // Don't scroll the lower margin
-    if (rs > t->mb)
+    // Don't scroll the lower margin, and nothing to do for 0 rows
+    if (rs > t->mb || n == 0)
         return;
     // Don't scroll in the bottom margin
     vt_coord_t h = t->mb - rs + 1;
@@ -254,8 +254,8 @@ void vt_term_scroll_down(
     vt_coord_t n   // Number of rows to scroll
 )
 {
-    // Don't scroll the lower margin
-    if (rs > t->mb)
+    // Don't scroll the lower margin, and nothing to do for 0 rows
+    if (rs > t->mb || n == 0)
         return;
     // Don't scroll in the bottom margin
     vt_coord_t h = t->mb - rs + 1;

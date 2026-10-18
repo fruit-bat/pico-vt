@@ -570,6 +570,306 @@ void test_repeat(vt_term_t *t) {
     check_grid_row(t, 5, COLS);
 }
 
+static vt_cell_attr_t default_attr(void) {
+    return vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS);
+}
+
+static vt_cell_colour_t cell_bg(vt_term_t *t, vt_coord_t r, vt_coord_t c) {
+    return vt_cell_bg_get(vt_cell_get_attr(t->rp[r][c]));
+}
+
+void test_margin_set(vt_term_t *t) {
+    printf("\nTesting margin set\n");
+    vt_term_margin_set(t, 3, 9);
+    assert(t->mt == 3 && t->mb == 9);
+
+    // Invalid margins are ignored
+    vt_term_margin_set(t, 9, 9);
+    assert(t->mt == 3 && t->mb == 9);
+    vt_term_margin_set(t, 10, 9);
+    assert(t->mt == 3 && t->mb == 9);
+    vt_term_margin_set(t, 0, H);
+    assert(t->mt == 3 && t->mb == 9);
+
+    vt_term_margin_set(t, 0, H - 1);
+    assert(t->mt == 0 && t->mb == H - 1);
+}
+
+void test_reset(vt_term_t *t) {
+    printf("\nTesting reset\n");
+    set_margins(t);
+    set_grid_rows(t);
+    vt_term_set_fgci(t, 3);
+    vt_term_set_bgci(t, 4);
+    vt_term_flags_add(t, VT_CELL_FLAGS_BOLD);
+    vt_term_cursor_set(t, 5, W - 1);
+    vt_term_putch(t, 'x');
+    t->flags = 0x55;
+
+    vt_term_reset(t);
+    check_cursor(t, 0, 0, false);
+    assert(t->mt == 0 && t->mb == H - 1);
+    assert(t->attr == default_attr());
+    assert(t->flags == 0);
+    // The screen is cleared with the default attributes
+    check_grid_blank(t);
+    // The saved cursor is reset too
+    vt_term_cursor_set(t, 7, 7);
+    vt_term_set_bgci(t, 4);
+    vt_term_restore_cursor(t);
+    check_cursor(t, 0, 0, false);
+    assert(t->attr == default_attr());
+}
+
+void test_save_restore_cursor(vt_term_t *t) {
+    printf("\nTesting save and restore cursor\n");
+    vt_term_cursor_set(t, 4, 6);
+    vt_term_set_fgci(t, 3);
+    vt_term_flags_add(t, VT_CELL_FLAGS_UNDERLINE);
+    vt_cell_attr_t saved = t->attr;
+    vt_term_save_cursor(t);
+
+    vt_term_cursor_set(t, 10, 12);
+    vt_term_reset_attr(t);
+    vt_term_restore_cursor(t);
+    check_cursor(t, 4, 6, false);
+    assert(t->attr == saved);
+
+    // Restoring again gives the same result
+    vt_term_cursor_set(t, 1, 1);
+    vt_term_restore_cursor(t);
+    check_cursor(t, 4, 6, false);
+
+    vt_term_reset_attr(t);
+}
+
+void test_cursor_moves(vt_term_t *t) {
+    printf("\nTesting cursor moves and clamping\n");
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_cursor_up(t, 2);
+    check_cursor(t, 3, 7, false);
+    vt_term_cursor_up(t, 100);
+    check_cursor(t, 0, 7, false);
+
+    vt_term_cursor_down(t, 2);
+    check_cursor(t, 2, 7, false);
+    vt_term_cursor_down(t, 100);
+    check_cursor(t, H - 1, 7, false);
+
+    vt_term_cursor_left(t, 3);
+    check_cursor(t, H - 1, 4, false);
+    vt_term_cursor_left(t, 100);
+    check_cursor(t, H - 1, 0, false);
+
+    vt_term_cursor_right(t, 3);
+    check_cursor(t, H - 1, 3, false);
+    vt_term_cursor_right(t, 100);
+    check_cursor(t, H - 1, W - 1, false);
+
+    // Moves of 0 leave the cursor where it is
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_cursor_up(t, 0);
+    vt_term_cursor_down(t, 0);
+    vt_term_cursor_left(t, 0);
+    vt_term_cursor_right(t, 0);
+    check_cursor(t, 5, 7, false);
+
+    vt_term_cursor_set(t, 100, 100);
+    check_cursor(t, H - 1, W - 1, false);
+    vt_term_cursor_set_col(t, 3);
+    check_cursor(t, H - 1, 3, false);
+    vt_term_cursor_set_col(t, 100);
+    check_cursor(t, H - 1, W - 1, false);
+    vt_term_cursor_set_row(t, 2);
+    check_cursor(t, 2, W - 1, false);
+    vt_term_cursor_set_row(t, 100);
+    check_cursor(t, H - 1, W - 1, false);
+
+    // Next line moves to column 0
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_next_line_down(t, 2);
+    check_cursor(t, 7, 0, false);
+    vt_term_next_line_down(t, 100);
+    check_cursor(t, H - 1, 0, false);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_next_line_up(t, 2);
+    check_cursor(t, 3, 0, false);
+    vt_term_next_line_up(t, 100);
+    check_cursor(t, 0, 0, false);
+}
+
+void test_attributes(vt_term_t *t) {
+    printf("\nTesting attributes\n");
+    vt_term_reset_attr(t);
+    assert(t->attr == default_attr());
+
+    vt_term_set_fgci(t, 3);
+    vt_term_set_bgci(t, 4);
+    vt_term_flags_add(t, VT_CELL_FLAGS_BOLD | VT_CELL_FLAGS_UNDERLINE);
+    vt_term_flags_clear(t, VT_CELL_FLAGS_BOLD);
+    assert(vt_cell_fg_get(t->attr) == 3);
+    assert(vt_cell_bg_get(t->attr) == 4);
+    assert(vt_cell_flags_get(t->attr) == VT_CELL_FLAGS_UNDERLINE);
+
+    // Characters are written with the current attributes
+    vt_term_clear_screen(t);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_putch(t, 'x');
+    assert(t->rp[5][7] == vt_cell_combine(t->attr, 'x'));
+
+    vt_term_reset_attr(t);
+    assert(t->attr == default_attr());
+}
+
+// Cells cleared by erase, insert and scroll take the current attributes
+void test_erase_uses_current_attr(vt_term_t *t) {
+    printf("\nTesting erase uses the current attributes\n");
+    vt_term_reset_attr(t);
+
+    set_grid_cols(t);
+    vt_term_set_bgci(t, 4);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_erase_in_line(t, 0);
+    assert(cell_bg(t, 5, 6) == VT_TERM_DEFAULT_BG);
+    assert(cell_bg(t, 5, 7) == 4);
+    assert(cell_bg(t, 5, W - 1) == 4);
+
+    set_grid_cols(t);
+    vt_term_erase_in_display(t, 0);
+    assert(cell_bg(t, 5, 6) == VT_TERM_DEFAULT_BG);
+    assert(cell_bg(t, 5, 7) == 4);
+    assert(cell_bg(t, H - 1, 0) == 4);
+
+    set_grid_cols(t);
+    vt_term_insert_characters(t, 2);
+    assert(cell_bg(t, 5, 6) == VT_TERM_DEFAULT_BG);
+    assert(cell_bg(t, 5, 7) == 4);
+    assert(cell_bg(t, 5, 8) == 4);
+    assert(cell_bg(t, 5, 9) == VT_TERM_DEFAULT_BG);
+
+    set_grid_rows(t);
+    vt_term_scroll_up(t, 0, 1);
+    assert(cell_bg(t, H - 2, 0) == VT_TERM_DEFAULT_BG);
+    assert(cell_bg(t, H - 1, 0) == 4);
+
+    set_grid_rows(t);
+    vt_term_scroll_down(t, 0, 1);
+    assert(cell_bg(t, 0, 0) == 4);
+    assert(cell_bg(t, 1, 0) == VT_TERM_DEFAULT_BG);
+
+    vt_term_clear_screen(t);
+    assert(cell_bg(t, 0, 0) == 4);
+    assert(cell_bg(t, H - 1, W - 1) == 4);
+
+    vt_term_reset_attr(t);
+    vt_term_clear_screen(t);
+}
+
+void test_erase_params(vt_term_t *t) {
+    printf("\nTesting erase parameters\n");
+    // ED 3 erases the whole screen (no scrollback to clear)
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 7);
+    vt_term_erase_in_display(t, 3);
+    check_grid_blank(t);
+    check_cursor(t, 5, 7, false);
+
+    // Unknown parameters do nothing
+    set_grid_rows(t);
+    vt_term_erase_in_display(t, 4);
+    check_grid_rows(t, ROWS);
+
+    set_grid_cols(t);
+    vt_term_erase_in_line(t, 3);
+    check_grid_row(t, 5, COLS);
+}
+
+void test_zero_counts(vt_term_t *t) {
+    printf("\nTesting zero counts\n");
+    static const row_edit_case_t cases[] = {
+        { 7, 0, COLS },
+    };
+    run_row_edit_cases(t, vt_term_insert_characters, cases, ARRAY_LEN(cases));
+    run_row_edit_cases(t, vt_term_delete_characters, cases, ARRAY_LEN(cases));
+    run_row_edit_cases(t, vt_term_repeat, cases, ARRAY_LEN(cases));
+
+    set_grid_rows(t);
+    vt_term_scroll_up(t, 0, 0);
+    vt_term_scroll_down(t, 0, 0);
+    check_grid_rows(t, ROWS);
+}
+
+void test_scroll_start_row(vt_term_t *t) {
+    printf("\nTesting scroll from a start row\n");
+    // Scrolling from a row inside the region only moves the rows below it (as IL/DL would)
+    set_grid_rows(t);
+    vt_term_scroll_up(t, 5, 1);
+    check_grid_rows(t, "ABCDEGHIJKLMNOP ");
+
+    set_grid_rows(t);
+    vt_term_scroll_down(t, 5, 2);
+    check_grid_rows(t, "ABCDE  FGHIJKLMN");
+
+    // A start row below the bottom margin does nothing
+    set_margins(t);
+    set_grid_rows(t);
+    vt_term_scroll_up(t, MB + 1, 1);
+    vt_term_scroll_down(t, MB + 1, 1);
+    check_grid_rows(t, ROWS);
+    clear_margins(t);
+}
+
+void test_nl_outside_margins(vt_term_t *t) {
+    printf("\nTesting nl and reverse nl outside the margins\n");
+
+    // Reverse index at the top of the screen with no margins scrolls the screen down
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 0, 3);
+    vt_term_reverse_nl(t);
+    check_cursor(t, 0, 3, false);
+    check_grid_rows(t, " ABCDEFGHIJKLMNO");
+
+    // Newline at the bottom of the screen with no margins scrolls the screen up
+    set_grid_rows(t);
+    vt_term_cursor_set(t, H - 1, 3);
+    vt_term_nl(t);
+    check_cursor(t, H - 1, 3, false);
+    check_grid_rows(t, "BCDEFGHIJKLMNOP ");
+
+    set_margins(t);
+
+    // Above the top margin reverse index moves up without scrolling...
+    set_grid_rows(t);
+    vt_term_cursor_set(t, MT - 1, 3);
+    vt_term_reverse_nl(t);
+    check_cursor(t, MT - 2, 3, false);
+    // ...and stops at the top of the screen
+    vt_term_reverse_nl(t);
+    check_cursor(t, 0, 3, false);
+    check_grid_rows(t, ROWS);
+
+    // Below the bottom margin newline moves down without scrolling...
+    vt_term_cursor_set(t, MB + 1, 3);
+    vt_term_nl(t);
+    check_cursor(t, MB + 2, 3, false);
+    // ...and stops at the bottom of the screen
+    vt_term_cursor_set(t, H - 1, 3);
+    vt_term_nl(t);
+    check_cursor(t, H - 1, 3, false);
+    check_grid_rows(t, ROWS);
+
+    // Inside the margins they just move the cursor
+    vt_term_cursor_set(t, 5, 3);
+    vt_term_nl(t);
+    check_cursor(t, 6, 3, false);
+    vt_term_reverse_nl(t);
+    vt_term_reverse_nl(t);
+    check_cursor(t, 4, 3, false);
+    check_grid_rows(t, ROWS);
+
+    clear_margins(t);
+}
+
 int main() {
     vt_cell_t grid[H][W];
     vt_term_t t;
@@ -595,6 +895,16 @@ int main() {
     test_wrap_cancelled_by_cursor_moves(&t);
     test_wrap_pending_edits(&t);
     test_repeat(&t);
+    test_margin_set(&t);
+    test_save_restore_cursor(&t);
+    test_cursor_moves(&t);
+    test_attributes(&t);
+    test_erase_uses_current_attr(&t);
+    test_erase_params(&t);
+    test_zero_counts(&t);
+    test_scroll_start_row(&t);
+    test_nl_outside_margins(&t);
+    test_reset(&t);
     test_clear_screen_tall();
 
     printf("all ok\n");
