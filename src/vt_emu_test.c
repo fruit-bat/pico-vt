@@ -808,6 +808,14 @@ void test_sgr_colours_extended(vt_emu_t* e) {
     vt_emu_reset(e);
 
     printf("Test SGR default and 24 bit colours\n");
+    // ESC [ m with no parameters resets everything, as ESC [ 0 m
+    vt_emu_put_str(e, (vt_char_t*)"\033[1;4;94;45m\033[m");
+    assert(t->attr == vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS));
+    // ...and so does an empty first parameter
+    vt_emu_put_str(e, (vt_char_t*)"\033[1;94m\033[;4m");
+    assert(t->attr == vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_CELL_FLAGS_UNDERLINE));
+    vt_emu_put_str(e, (vt_char_t*)"\033[m");
+
     // 39/49 restore the default foreground/background
     vt_emu_put_str(e, (vt_char_t*)"\033[33;44m\033[49m");
     assert(vt_cell_fg_get(t->attr) == 3);

@@ -188,6 +188,12 @@ static void vt_emu_sgr(vt_emu_t* const e) {
         VT_CELL_FLAGS_STRIKETHROUGH  ,
     };
 
+    // ESC [ m with no parameters is the same as ESC [ 0 m
+    if (p->n_params == 0) {
+        vt_term_reset_attr(t);
+        return;
+    }
+
     for (uint32_t i = 0; i < p->n_params; ++i) {
         const uint32_t q = vt_emu_get_p0(p, i);
         if ((q < 10) || (q >= 20 && q < 30)) {
