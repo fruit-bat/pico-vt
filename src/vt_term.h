@@ -26,6 +26,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include <stdint.h>
+#include <stdbool.h>
 #include "vt_types.h"
 #include "vt_cell.h"
 
@@ -40,32 +41,16 @@ extern "C"
 #define VT_TERM_DEFAULT_FG 1
 #define VT_TERM_DEFAULT_FLAGS VT_CELL_FLAGS_NORMAL
 
-// VT100-derived terminals have a wrap behavior where the cursor "sticks"
-// at the end of a line instead of immediately wrapping.  This allows you
-// to use the last column without getting extra blank lines or
-// unintentionally scrolling the screen.  The logic we implement for it
-// is not exactly like that of a real VT100, but it seems to be
-// sufficient for things to work as expected in the use cases and with
-// the terminfo files I've tested with.  Specifically, I call the case
-// where the cursor has advanced exactly one position past the rightmost
-// column "hanging".  A rough description of the current algorithm is
-// that there are two cases which each have two sub-cases:
-// 1. You're hanging onto the next line below.  That is, you're not at
-//    the bottom of the screen/scrolling region.
-//    1a. If you receive a newline, hanging mode is canceled and nothing
-//        else happens.  In particular, you do *not* advanced to the next
-//        line.  You're already *at* the start of the "next" line.
-//    2b. If you receive a printable character, just cancel hanging mode.
-// 2. You're hanging past the bottom of the screen/scrolling region.
-//    2a. If you receive a newline or printable character, scroll the
-//        screen up one line and cancel hanging.
-//    2b. If you receive a cursor reposition or whatever, cancel hanging.
-// Below, hang is 0 if not hanging, or 1 or 2 as described above.
-typedef enum {
-    VT_HANG_NONE   = 0,
-    VT_HANG_LINE   = 1,
-    VT_HANG_BOTTOM = 2
-} vt_term_hang_t;
+// VT100-derived terminals have a deferred wrap behavior: writing a
+// character in the last column leaves the cursor in that column and sets
+// a "wrap pending" flag instead of moving to the next line.  This allows
+// you to use the last column without getting extra blank lines or
+// unintentionally scrolling the screen.  As in xterm:
+// - The next printable character first does a CR + LF (scrolling the
+//   region if the cursor is on the bottom margin) and is then written.
+// - CR, LF, RI, cursor movement, erase, insert and delete clear the flag.
+//   Since the cursor never left the last column, they act on the row and
+//   column the character was written to.
 
 typedef struct 
 {
@@ -79,7 +64,7 @@ typedef struct
     vt_coord_t s_r; // Cursor row
     vt_coord_t s_c; // Cursor column    
     vt_cell_attr_t s_attr; // The current attributes
-    vt_term_hang_t hang; // Delayed scroll handling
+    bool wrap; // Wrap pending (deferred wrap at the last column)
     uint32_t flags;
     vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers
 

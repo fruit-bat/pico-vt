@@ -271,13 +271,13 @@ void vt_emu_put_ch(
     case VT_A_C0_HT: {      // CHT - Cursor Horizontal Tabulation, Horizontal Tab 
         DEBUG("VT_A_CHT/VT_A_C0_HT\n");
         const uint32_t n = vt_emu_get_p1(p, 0);
-        t->c = vt_tabs_next(&e->tabs, t->c, n);
+        vt_term_cursor_set_col(t, vt_tabs_next(&e->tabs, t->c, n));
         break;
     }
     case VT_A_HTB: {       // Horizontal Tab backwards
         DEBUG("VT_A_HTB\n");
         const uint32_t n = vt_emu_get_p1(p, 0);
-        t->c = vt_tabs_prev(&e->tabs, t->c, n);
+        vt_term_cursor_set_col(t, vt_tabs_prev(&e->tabs, t->c, n));
         break;
     }
     case VT_A_C0_LF:       // Line Feed

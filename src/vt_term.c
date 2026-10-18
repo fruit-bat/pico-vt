@@ -97,10 +97,11 @@ void vt_term_putch(
     vt_term_t *t, // The terminal
     vt_char_t ch
 ) {
-    if (t->hang == VT_HANG_BOTTOM) {
-        vt_term_scroll_up(t, t->mt, 1);
+    if (t->wrap) {
+        // Deferred wrap: CR + LF before writing (LF clears the flag)
+        t->c = 0;
+        vt_term_nl(t);
     }
-    t->hang = VT_HANG_NONE;
 
     t->rp[t->r][t->c] = vt_cell_combine(t->attr, ch);
 
@@ -108,16 +109,8 @@ void vt_term_putch(
         t->c++;
     }
     else {
-        t->c = 0;
-        if (t->r == t->mb) {
-            // At the bottom margin, scroll the region on the next character
-            t->hang = VT_HANG_BOTTOM;
-        }
-        else if (t->r < t->h - 1) {
-            t->hang = VT_HANG_LINE;
-            t->r++;
-        }
-        // Else on the last row below the scroll region: no scroll, wrap to column 0
+        // Stay in the last column until the next character arrives
+        t->wrap = true;
     }
 }
 
@@ -128,8 +121,8 @@ void vt_term_reset(
     // Clear down any flags
     t->flags = 0;
 
-    // Clear the delayed scroll
-    t->hang = VT_HANG_NONE;
+    // Clear the deferred wrap
+    t->wrap = false;
 
     // Cursor top left
     t->c = 0; // Cursor column
@@ -160,6 +153,7 @@ void vt_term_save_cursor(
 void vt_term_restore_cursor(
     vt_term_t* t  // The terminal
 ) {
+    t->wrap = false;
     t->r = t->s_r;
     t->c = t->s_c;
     t->attr = t->s_attr;
@@ -191,6 +185,7 @@ void vt_term_cursor_set(
     vt_coord_t r,
     vt_coord_t c
 ) {
+    t->wrap = false;
     t->r = MIN(r, t->h - 1);
     t->c = MIN(c, t->w - 1);
 }
@@ -199,6 +194,7 @@ void vt_term_cursor_set_col(
     vt_term_t *t,
     vt_coord_t c
 ) {
+    t->wrap = false;
     t->c = MIN(c, t->w - 1);
 }
 
@@ -206,6 +202,7 @@ void vt_term_cursor_set_row(
     vt_term_t *t,
     vt_coord_t r
 ) {
+    t->wrap = false;
     t->r = MIN(r, t->h - 1);
 }
 
@@ -303,6 +300,7 @@ void vt_term_erase_in_display(
     uint32_t p0   // Parameter to specify the erase mode (0, 1, 2)
 )
 {
+    t->wrap = false;
     // Default range: clear the entire screen
     vt_coord_t b = 0;    // Start row (inclusive)
     vt_coord_t e = t->h; // End row (exclusive)
@@ -341,6 +339,7 @@ void vt_term_insert_characters(
     uint32_t n    // The number of characters to insert (note: 0 means 0)
 )
 {
+    t->wrap = false;
     if (n > t->w - t->c)
         n = t->w - t->c;
     if (n == 0)
@@ -359,6 +358,7 @@ void vt_term_delete_characters(
     uint32_t n    // The number of characters to delete (note: 0 means 0)
 )
 {
+    t->wrap = false;
     if (n > t->w - t->c)
         n = t->w - t->c;
     if (n == 0)
@@ -395,6 +395,7 @@ void vt_term_erase_in_line(
     uint32_t p0   // Parameter to specify the erase mode (0, 1, 2)
 )
 {
+    t->wrap = false;
     switch (p0)
     {
     case 0:
@@ -441,9 +442,10 @@ void vt_term_repeat(
     vt_term_t *t, // The terminal
     uint32_t n    // The number of characters to repeat
 ) {
-    if (!t->c) return;
+    // With a wrap pending the last character is under the cursor, otherwise just before it
+    if (!t->wrap && !t->c) return;
     vt_cell_t *rp = t->rp[t->r];
-    vt_char_t ch = rp[t->c - 1];
+    vt_char_t ch = vt_cell_get_char(rp[t->wrap ? t->c : t->c - 1]);
     for (vt_coord_t i = 0; i < n; i++) {
         vt_term_putch(t, ch);
     }
@@ -452,7 +454,7 @@ void vt_term_repeat(
 void vt_term_reverse_nl(
     vt_term_t *t // The terminal
 ) {
-    t->hang = VT_HANG_NONE;
+    t->wrap = false;
 
     if (t->r == t->mt) {
         vt_term_scroll_down(t, t->mt, 1);
@@ -465,14 +467,7 @@ void vt_term_reverse_nl(
 void vt_term_nl(
     vt_term_t *t // The terminal
 ) {
-    if (t->hang != VT_HANG_NONE)
-    {
-        if (t->hang == VT_HANG_BOTTOM) {
-            vt_term_scroll_up(t, t->mt, 1);
-        }
-        t->hang = VT_HANG_NONE;
-        return;
-    }
+    t->wrap = false;
 
     if (t->r == t->mb) {
         vt_term_scroll_up(t, t->mt, 1);
@@ -485,20 +480,15 @@ void vt_term_nl(
 void vt_term_cr(
     vt_term_t *t // The terminal
 ) {
+    t->wrap = false;
     t->c = 0;
-    if (t->hang == VT_HANG_LINE)
-    {
-        t->hang = VT_HANG_NONE;
-        if (t->r > t->mt && t->r <= t->mb) {
-            t->r--;
-        }
-    }
 }
 
 void vt_term_cursor_down(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->r = t->r + n >= t->h ? t->h - 1 : t->r + n;
 }
 
@@ -506,6 +496,7 @@ void vt_term_cursor_up(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->r = t->r >= n ? t->r - n : 0;
 }
 
@@ -513,6 +504,7 @@ void vt_term_cursor_left(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->c = t->c >= n ? t->c - n : 0;
 }
 
@@ -520,6 +512,7 @@ void vt_term_cursor_right(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->c = t->c + n >= t->w ? t->w - 1 : t->c + n;
 }
 
@@ -527,6 +520,7 @@ void vt_term_next_line_down(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->c = 0;
     t->r = t->r + n >= t->h ? t->h - 1 : t->r + n;
 }
@@ -535,6 +529,7 @@ void vt_term_next_line_up(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->c = 0;
     t->r = t->r >= n ? t->r - n : 0;
 }
