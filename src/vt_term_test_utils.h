@@ -46,9 +46,9 @@ void set_grid_rows(vt_term_t *t);
 
 void set_grid_cols(vt_term_t *t);
 
-void check_grid_rows(vt_term_t *t, char* chs);
+void check_grid_rows(vt_term_t *t, const char* chs);
 
-void check_grid_row(vt_term_t *t, vt_coord_t r, char* chs);
+void check_grid_row(vt_term_t *t, vt_coord_t r, const char* chs);
 
 #ifdef __cplusplus
 }

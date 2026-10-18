@@ -24,350 +24,172 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-/* Build instructions:
+/* Build and run:
  *
- * cc -DVT_BUILD_TEST -Wall vt_term.c
- * 
- * ./a.out
+ * ./vt_term_test.sh
  *
  */
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdio.h>
-#include "vt_term.h"
 #include <string.h>
 #include <assert.h>
+#include "vt_term.h"
+#include "vt_term_test_utils.h"
 
-// Print out the characters in the grid so we can see what is going on
-void print_grid(vt_term_t *t) {
-    vt_coord_t w = t->w;
-    vt_coord_t h = t->h;
-    for (vt_coord_t c = 0; c < w * 7 + 5; ++c) printf(c == (t->c + 1) ? "+" : "-");
-    printf("\n");
-    for (vt_coord_t r = 0; r < h; ++r) {
-        printf(r == (t->r) ? "+" : "|");
-        for (vt_coord_t c = 0; c < w; ++c) {
-            vt_cell_t ct = t->rp[r][c];
-            vt_char_t ch = vt_cell_get_char(ct);
-            printf("%c", (uint8_t)ch);
-        }
-        printf(r == (t->r) ? "+" : "|");
-        for (vt_coord_t c = 0; c < w; ++c) {
-            vt_cell_t ct = t->rp[r][c];
-            vt_cell_attr_t ca = vt_cell_get_attr(ct);
-            vt_cell_colour_t ci = vt_cell_fg_get(ca);
-            printf("%02X", (uint8_t)ci);
-        }
-        printf("|");
-        for (vt_coord_t c = 0; c < w; ++c) {
-            vt_cell_t ct = t->rp[r][c];
-            vt_cell_attr_t ca = vt_cell_get_attr(ct);
-            vt_cell_colour_t ci = vt_cell_bg_get(ca);
-            printf("%02X", (uint8_t)ci);
-        }
-        printf("|");
-        for (vt_coord_t c = 0; c < w; ++c) {
-            vt_cell_t ct = t->rp[r][c];
-            vt_cell_attr_t ca = vt_cell_get_attr(ct);
-            vt_cell_flags_t fl = vt_cell_flags_get(ca);
-            printf("%02X", (uint8_t)fl);
-        }
-        printf("|\n");
-    }
-    for (vt_coord_t c = 0; c < w * 7 + 5; ++c) printf(c == (t->c + 1) ? "+" : "-");
-    printf("\n");
+#define ARRAY_LEN(a) (sizeof(a) / sizeof((a)[0]))
+
+// The expected strings below assume this terminal size
+#define W 20
+#define H 16
+
+// Margins used by the scroll region tests
+#define MT 2
+#define MB (H - 5)
+
+#define BLANK "                    " // A blank row
+#define COLS  "ABCDEFGHIJKLMNOPQRST" // Any row after set_grid_cols()
+#define ROWS  "ABCDEFGHIJKLMNOP"     // The rows after set_grid_rows()
+
+static void set_margins(vt_term_t *t) {
+    vt_term_margin_set(t, MT, MB);
 }
 
-void check_grid_blank(vt_term_t *t) {
-    // Create a cell with default attributes and a space character
-    vt_cell_attr_t c1 = vt_cell_enc_attr(
-        VT_TERM_DEFAULT_FG,
-        VT_TERM_DEFAULT_BG,
-        VT_TERM_DEFAULT_FLAGS
-    );
-    vt_cell_t c3 = vt_cell_combine(c1, 32);
-    vt_coord_t w = t->w;
-    vt_coord_t h = t->h;    
-    for (vt_coord_t c = 0; c < w; ++c) {
-        for (vt_coord_t r = 0; r < h; ++r) {
-            vt_cell_t ct = t->rp[r][c];
-            assert(ct == c3);
-        }
-    }
+static void clear_margins(vt_term_t *t) {
+    vt_term_margin_set(t, 0, H - 1);
 }
 
-void set_grid_rows(vt_term_t *t) {
-    // Create a cell with default attributes and a space character
-    vt_cell_attr_t c1 = vt_cell_enc_attr(
-        VT_TERM_DEFAULT_FG,
-        VT_TERM_DEFAULT_BG,
-        VT_TERM_DEFAULT_FLAGS
-    );
-    vt_coord_t w = t->w;
-    vt_coord_t h = t->h;    
-
-    // Put characters in the grid so we can test scroll up
-    // AAAAA...
-    // BBBBB...
-    // etc.
-    for (vt_coord_t c = 0; c < w; ++c) {
-        for (vt_coord_t r = 0; r < h; ++r) {
-            t->rp[r][c] = vt_cell_combine(c1, r + 'A');
-        }
-    } 
+static void put_str(vt_term_t *t, const char *s) {
+    while (*s) vt_term_putch(t, *s++);
 }
 
-void set_grid_cols(vt_term_t *t) {
-    // Create a cell with default attributes and a space character
-    vt_cell_attr_t c1 = vt_cell_enc_attr(
-        VT_TERM_DEFAULT_FG,
-        VT_TERM_DEFAULT_BG,
-        VT_TERM_DEFAULT_FLAGS
-    );
-    vt_coord_t w = t->w;
-    vt_coord_t h = t->h;    
-
-    // Put characters in the grid so we can test scroll up
-    // AAAAA...
-    // BBBBB...
-    // etc.
-    for (vt_coord_t c = 0; c < w; ++c) {
-        for (vt_coord_t r = 0; r < h; ++r) {
-            t->rp[r][c] = vt_cell_combine(c1, c + 'A');
-        }
-    } 
+static void check_cursor(vt_term_t *t, vt_coord_t r, vt_coord_t c, bool wrap) {
+    assert(t->r == r);
+    assert(t->c == c);
+    assert(t->wrap == wrap);
 }
 
-void check_grid_rows(vt_term_t *t, char* chs) {
-    vt_coord_t w = t->w;
-    vt_coord_t h = t->h;    
-    for (vt_coord_t c = 0; c < w; ++c) {
-        for (vt_coord_t r = 0; r < h; ++r) {
-            vt_cell_t ct = t->rp[r][c];
-            vt_char_t ch = vt_cell_get_char(ct);
-            if (chs[r] != '?') assert(ch == (vt_char_t)(chs[r]));
-        }
-    }
+// Check rows [from, to) are blank
+static void check_rows_blank(vt_term_t *t, vt_coord_t from, vt_coord_t to) {
+    for (vt_coord_t r = from; r < to; ++r) check_grid_row(t, r, BLANK);
 }
 
-void check_grid_row(vt_term_t *t, vt_coord_t r, char* chs) {
-    vt_coord_t w = t->w;
-    for (vt_coord_t c = 0; c < w; ++c) {
-        vt_cell_t ct = t->rp[r][c];
-        vt_char_t ch = vt_cell_get_char(ct);
-        assert(ch == (vt_char_t)(chs[c]));
-    }
-}
+typedef void (*scroll_fn_t)(vt_term_t *t, vt_coord_t rs, vt_coord_t n);
 
 void test_scroll(vt_term_t *t) {
-    // Put characters in the grid so we can test scroll up
-    // AAAAA...
-    // BBBBB...
-    // etc.
-    set_grid_rows(t);
-    print_grid(t);
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
-
-    printf("\nScroll up 1 row\n");
-    vt_term_scroll_up(t, 0, 1);
-    print_grid(t);
-    check_grid_rows(t, "BCDEFGHIJKLMNOP "); 
-
-    printf("\nScroll up 2 rows\n");
-    set_grid_rows(t);
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
-    vt_term_scroll_up(t, 0, 2);
-    print_grid(t);
-    check_grid_rows(t, "CDEFGHIJKLMNOP  "); 
-
-    printf("\nScroll up 100 rows\n");
-    set_grid_rows(t);
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
-    vt_term_scroll_up(t, 0, 100);
-    print_grid(t);
-    check_grid_blank(t);
-
-    printf("\nScroll down 1 row\n");
-    set_grid_rows(t);
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
-    vt_term_scroll_down(t, 0, 1);
-    print_grid(t);
-    check_grid_rows(t, " ABCDEFGHIJKLMNO"); 
-
-    printf("\nScroll down 2 rows\n");
-    set_grid_rows(t);
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
-    vt_term_scroll_down(t, 0, 2);
-    print_grid(t);
-    check_grid_rows(t, "  ABCDEFGHIJKLMN"); 
-
-    printf("\nScroll down 100 rows\n");
-    set_grid_rows(t);
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
-    vt_term_scroll_down(t, 0, 100);
-    print_grid(t);
-    check_grid_blank(t);
-
-    // Set top and bottom margins
-    t->mt = 2;
-    t->mb = t->h - 5;
+    static const struct {
+        const char *name;
+        scroll_fn_t fn;
+        bool margins;
+        vt_coord_t n;
+        const char *rows; // NULL means the whole grid is blank
+    } cases[] = {
+        { "up",   vt_term_scroll_up,   false, 1,   "BCDEFGHIJKLMNOP " },
+        { "up",   vt_term_scroll_up,   false, 2,   "CDEFGHIJKLMNOP  " },
+        { "up",   vt_term_scroll_up,   false, 100, NULL },
+        { "down", vt_term_scroll_down, false, 1,   " ABCDEFGHIJKLMNO" },
+        { "down", vt_term_scroll_down, false, 2,   "  ABCDEFGHIJKLMN" },
+        { "down", vt_term_scroll_down, false, 100, NULL },
+        { "up",   vt_term_scroll_up,   true,  1,   "ABDEFGHIJKL MNOP" },
+        { "up",   vt_term_scroll_up,   true,  2,   "ABEFGHIJKL  MNOP" },
+        { "up",   vt_term_scroll_up,   true,  10,  "AB          MNOP" },
+        { "down", vt_term_scroll_down, true,  1,   "AB CDEFGHIJKMNOP" },
+        { "down", vt_term_scroll_down, true,  2,   "AB  CDEFGHIJMNOP" },
+        { "down", vt_term_scroll_down, true,  10,  "AB          MNOP" },
+    };
 
     set_grid_rows(t);
-    vt_term_scroll_up(t, t->mt, 1);
     print_grid(t);
-    check_grid_rows(t, "ABDEFGHIJKL MNOP"); 
+    check_grid_rows(t, ROWS);
 
-    set_grid_rows(t);
-    vt_term_scroll_up(t, t->mt, 2);
-    print_grid(t);
-    check_grid_rows(t, "ABEFGHIJKL  MNOP"); 
+    for (size_t i = 0; i < ARRAY_LEN(cases); ++i) {
+        printf("\nScroll %s %d rows%s\n", cases[i].name, cases[i].n,
+            cases[i].margins ? " with margins" : "");
+        if (cases[i].margins) set_margins(t); else clear_margins(t);
+        set_grid_rows(t);
+        cases[i].fn(t, t->mt, cases[i].n);
+        print_grid(t);
+        if (cases[i].rows) check_grid_rows(t, cases[i].rows);
+        else check_grid_blank(t);
+    }
 
-    set_grid_rows(t);
-    vt_term_scroll_up(t, t->mt, 10);
-    print_grid(t);
-    check_grid_rows(t, "AB          MNOP"); 
-
-    set_grid_rows(t);
-    vt_term_scroll_down(t, t->mt, 1);
-    print_grid(t);
-    check_grid_rows(t, "AB CDEFGHIJKMNOP"); 
-
-    set_grid_rows(t);
-    vt_term_scroll_down(t, t->mt, 2);
-    print_grid(t);
-    check_grid_rows(t, "AB  CDEFGHIJMNOP"); 
-
-    set_grid_rows(t);
-    vt_term_scroll_down(t, t->mt, 10);
-    print_grid(t);
-    check_grid_rows(t, "AB          MNOP"); 
-
-    // Clear margins
-    t->mt = 0;
-    t->mb = t->h - 1;
-
+    clear_margins(t);
 }
 
 void test_erase_in_display(vt_term_t *t) {
-    // Erase in Display is a terminal control function (from ANSI escape codes, specifically ESC [ n J) that clears parts or all of the terminal screen, depending on the parameter n:
-    //
-    // n = 0: Erase from cursor to end of screen (including cursor position).
-    // n = 1: Erase from start of screen to cursor (including cursor position).
-    // n = 2: Erase entire screen.
-
     printf("\nErase in display [0]\n");
     set_grid_rows(t);
-    t->r = 5; t->c = 7;
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
+    vt_term_cursor_set(t, 5, 7);
     vt_term_erase_in_display(t, 0);
     print_grid(t);
-    check_grid_row(t, 0, "AAAAAAAAAAAAAAAAAAAA");
-    check_grid_row(t, 1, "BBBBBBBBBBBBBBBBBBBB");
-    check_grid_row(t, 2, "CCCCCCCCCCCCCCCCCCCC");
-    check_grid_row(t, 3, "DDDDDDDDDDDDDDDDDDDD");
-    check_grid_row(t, 4, "EEEEEEEEEEEEEEEEEEEE");
+    check_grid_rows(t, "ABCDE?          ");
     check_grid_row(t, 5, "FFFFFFF             ");
-    for(vt_coord_t r = 6; r < t->h; ++r)
-        check_grid_row(t, r, "                    ");
 
     printf("\nErase in display [1]\n");
     set_grid_rows(t);
-    t->r = 10; t->c = 7;
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
+    vt_term_cursor_set(t, 10, 7);
     vt_term_erase_in_display(t, 1);
     print_grid(t);
-    for(vt_coord_t r = 0; r < 10; ++r) {
-        check_grid_row(t, r, "                    ");
-    }
+    check_grid_rows(t, "          ?LMNOP");
     check_grid_row(t, 10, "        KKKKKKKKKKKK");
-    check_grid_row(t, 11, "LLLLLLLLLLLLLLLLLLLL");
-    check_grid_row(t, 12, "MMMMMMMMMMMMMMMMMMMM");
-    check_grid_row(t, 13, "NNNNNNNNNNNNNNNNNNNN");
-    check_grid_row(t, 14, "OOOOOOOOOOOOOOOOOOOO");
-    check_grid_row(t, 15, "PPPPPPPPPPPPPPPPPPPP");
 
     printf("\nErase in display [2]\n");
     set_grid_rows(t);
-    check_grid_rows(t, "ABCDEFGHIJKLMNOP"); 
     vt_term_erase_in_display(t, 2);
     print_grid(t);
     check_grid_blank(t);
 }
 
+// A single-row edit applied to row 5 of a set_grid_cols() grid
+typedef void (*row_edit_fn_t)(vt_term_t *t, uint32_t p);
+
+typedef struct {
+    vt_coord_t c;     // Cursor column
+    uint32_t p;       // Parameter for the edit
+    const char *row5; // Expected row 5
+} row_edit_case_t;
+
+static void run_row_edit_cases(
+    vt_term_t *t,
+    row_edit_fn_t fn,
+    const row_edit_case_t *cases,
+    size_t n
+) {
+    for (size_t i = 0; i < n; ++i) {
+        set_grid_cols(t);
+        vt_term_cursor_set(t, 5, cases[i].c);
+        fn(t, cases[i].p);
+        print_grid(t);
+        check_grid_row(t, 4, COLS);
+        check_grid_row(t, 5, cases[i].row5);
+        check_grid_row(t, 6, COLS);
+    }
+}
+
 void test_insert_characters(vt_term_t *t) {
-    t->r = 5;
-    t->c = 0;
-    set_grid_cols(t);
-    vt_term_insert_characters(t, 3);
-    print_grid(t);
-    check_grid_row(t, 5, "   ABCDEFGHIJKLMNOPQ");
-
-    t->c = 5;
-    set_grid_cols(t);
-    vt_term_insert_characters(t, 3);
-    print_grid( t);
-    check_grid_row(t, 5, "ABCDE   FGHIJKLMNOPQ");
-
-    t->c = 5;
-    set_grid_cols(t);
-    vt_term_insert_characters(t, 300);
-    print_grid( t);
-    check_grid_row(t, 5, "ABCDE               ");
-
-    // Insert a full line's worth at column 0 (previously read/wrote out of bounds)
-    t->c = 0;
-    set_grid_cols(t);
-    vt_term_insert_characters(t, t->w);
-    print_grid( t);
-    check_grid_row(t, 5, "                    ");
-    check_grid_row(t, 4, "ABCDEFGHIJKLMNOPQRST");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
-
-    t->c = 0;
-    set_grid_cols(t);
-    vt_term_insert_characters(t, 300);
-    print_grid( t);
-    check_grid_row(t, 5, "                    ");
-
-    t->c = 0;
-    set_grid_cols(t);
-    vt_term_insert_characters(t, t->w - 1);
-    print_grid( t);
-    check_grid_row(t, 5, "                   A");
-
-    t->c = t->w - 1;
-    set_grid_cols(t);
-    vt_term_insert_characters(t, 1);
-    print_grid( t);
-    check_grid_row(t, 5, "ABCDEFGHIJKLMNOPQRS ");
+    static const row_edit_case_t cases[] = {
+        { 0,     3,     "   ABCDEFGHIJKLMNOPQ" },
+        { 5,     3,     "ABCDE   FGHIJKLMNOPQ" },
+        { 5,     300,   "ABCDE               " },
+        { 0,     W,     BLANK },                  // Previously read/wrote out of bounds
+        { 0,     300,   BLANK },
+        { 0,     W - 1, "                   A" },
+        { W - 1, 1,     "ABCDEFGHIJKLMNOPQRS " },
+    };
+    printf("\nInsert characters\n");
+    run_row_edit_cases(t, vt_term_insert_characters, cases, ARRAY_LEN(cases));
 }
 
 void test_delete_characters(vt_term_t *t) {
-    t->r = 5;
-    t->c = 0;
-    set_grid_cols(t);
-    vt_term_delete_characters(t, 3);
-    print_grid(t);
-    check_grid_row(t, 5, "DEFGHIJKLMNOPQRST   ");
-
-    t->c = 5;
-    set_grid_cols(t);
-    vt_term_delete_characters(t, 3);
-    print_grid( t);
-    check_grid_row(t, 5, "ABCDEIJKLMNOPQRST   ");
-
-    t->c = 5;
-    set_grid_cols(t);
-    vt_term_delete_characters(t, 300);
-    print_grid( t);
-    check_grid_row(t, 5, "ABCDE               ");
-
-    t->c = t->w - 1;
-    set_grid_cols(t);
-    vt_term_delete_characters(t, 1);
-    print_grid( t);
-    check_grid_row(t, 5, "ABCDEFGHIJKLMNOPQRS ");
+    static const row_edit_case_t cases[] = {
+        { 0,     3,   "DEFGHIJKLMNOPQRST   " },
+        { 5,     3,   "ABCDEIJKLMNOPQRST   " },
+        { 5,     300, "ABCDE               " },
+        { W - 1, 1,   "ABCDEFGHIJKLMNOPQRS " },
+    };
+    printf("\nDelete characters\n");
+    run_row_edit_cases(t, vt_term_delete_characters, cases, ARRAY_LEN(cases));
 
     // TODO Check attributes
     /* VT102 manual says the attribute for the newly empty characters
@@ -377,102 +199,69 @@ void test_delete_characters(vt_term_t *t) {
 }
 
 void test_erase_in_line(vt_term_t *t) {
-
-    t->r = 5;
-    t->c = 7;
-    set_grid_cols(t);
-    vt_term_erase_in_line(t, 0);
-    print_grid(t);
-    check_grid_row(t, 5, "ABCDEFG             ");
-
-    set_grid_cols(t);
-    vt_term_erase_in_line(t, 1);
-    print_grid(t);
-    check_grid_row(t, 5, "        IJKLMNOPQRST");
-
-    set_grid_cols(t);
-    vt_term_erase_in_line(t, 2);
-    print_grid(t);
-    check_grid_row(t, 5, "                    ");
+    static const row_edit_case_t cases[] = {
+        { 7, 0, "ABCDEFG             " },
+        { 7, 1, "        IJKLMNOPQRST" },
+        { 7, 2, BLANK },
+    };
+    printf("\nErase in line\n");
+    run_row_edit_cases(t, vt_term_erase_in_line, cases, ARRAY_LEN(cases));
 }
 
 void test_putch(vt_term_t *t) {
     printf("\nTesting putch no scroll\n");
     vt_term_clear_screen(t);
-    t->r = 5;t->c = 7;
-    vt_term_putch(t, 'A');
-    vt_term_putch(t, 'B');
-    vt_term_putch(t, 'C');
+    vt_term_cursor_set(t, 5, 7);
+    put_str(t, "ABC");
     print_grid(t);
-    for(vt_coord_t r = 0; r < t->h; ++r) {
-        if(r != 5) check_grid_row(t, r, "                    ");
-    }
+    check_grid_rows(t, "     ?          ");
     check_grid_row(t, 5, "       ABC          ");
 
     printf("\nTesting putch wrap\n");
     vt_term_clear_screen(t);
-    t->r = 5;t->c = t->w - 1;
-    vt_term_putch(t, 'A');
-    vt_term_putch(t, 'B');
-    vt_term_putch(t, 'C');
+    vt_term_cursor_set(t, 5, W - 1);
+    put_str(t, "ABC");
     print_grid(t);
-    for(vt_coord_t r = 0; r < t->h; ++r) {
-        if(r != 5 && r != 6) check_grid_row(t, r, "                    ");
-    }
+    check_grid_rows(t, "     ??         ");
     check_grid_row(t, 5, "                   A");
     check_grid_row(t, 6, "BC                  ");
 
     printf("\nTesting deferred wrap scroll\n");
     vt_term_clear_screen(t);
-    t->r = t->h - 1;t->c = t->w - 1;
+    vt_term_cursor_set(t, H - 1, W - 1);
     vt_term_putch(t, 'A');
     print_grid(t);
     // Cursor stays in the last column with a wrap pending; nothing scrolls yet
-    assert(t->r == t->h - 1);
-    assert(t->c == t->w - 1);
-    assert(t->wrap);
-    for(vt_coord_t r = 0; r < (t->h - 1); ++r) {
-        check_grid_row(t, r, "                    ");
-    }
-    check_grid_row(t, t->h - 1, "                   A");
-    vt_term_putch(t, 'B');
-    vt_term_putch(t, 'C');
+    check_cursor(t, H - 1, W - 1, true);
+    check_rows_blank(t, 0, H - 1);
+    check_grid_row(t, H - 1, "                   A");
+    put_str(t, "BC");
     print_grid(t);
-    for(vt_coord_t r = 0; r < (t->h - 2); ++r) {
-        check_grid_row(t, r, "                    ");
-    }
-    check_grid_row(t, t->h - 2, "                   A");
-    check_grid_row(t, t->h - 1, "BC                  ");
+    check_rows_blank(t, 0, H - 2);
+    check_grid_row(t, H - 2, "                   A");
+    check_grid_row(t, H - 1, "BC                  ");
 
     printf("\nTesting deferred wrap scroll with margins\n");
-    // Set top and bottom margins
-    t->mt = 2;
-    t->mb = t->h - 5;
-    t->r = t->mb; 
-    t->c = t->w - 1;
-
+    set_margins(t);
     set_grid_rows(t);
+    vt_term_cursor_set(t, MB, W - 1);
     vt_term_putch(t, 'x');
     print_grid(t);
     check_grid_rows(t, "ABCDEFGHIJK?MNOP");
     check_grid_row(t, 11, "LLLLLLLLLLLLLLLLLLLx");
-    vt_term_putch(t, 'y');
-    vt_term_putch(t, 'z');
+    put_str(t, "yz");
     print_grid(t);
-    check_grid_rows(t, "ABDEFGHIJK??MNOP"); 
+    check_grid_rows(t, "ABDEFGHIJK??MNOP");
     check_grid_row(t, 10, "LLLLLLLLLLLLLLLLLLLx");
     check_grid_row(t, 11, "yz                  ");
 
     printf("\nTesting wrap below bottom margin\n");
     // Wrapping on a row below the scroll region moves down a row without scrolling
-    t->r = t->mb + 2;
-    t->c = t->w - 1;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MB + 2, W - 1);
     vt_term_putch(t, 'x');
     print_grid(t);
-    assert(t->r == t->mb + 2);
-    assert(t->c == t->w - 1);
-    assert(t->wrap);
+    check_cursor(t, MB + 2, W - 1, true);
     vt_term_putch(t, 'y');
     print_grid(t);
     check_grid_rows(t, "ABCDEFGHIJKLM??P");
@@ -481,22 +270,17 @@ void test_putch(vt_term_t *t) {
 
     printf("\nTesting wrap on last row below bottom margin\n");
     // On the last row below the scroll region, wrap to column 0 without scrolling
-    t->r = t->h - 1;
-    t->c = t->w - 1;
     set_grid_rows(t);
+    vt_term_cursor_set(t, H - 1, W - 1);
     vt_term_putch(t, 'x');
     print_grid(t);
-    assert(t->r == t->h - 1);
-    assert(t->c == t->w - 1);
-    assert(t->wrap);
+    check_cursor(t, H - 1, W - 1, true);
     vt_term_putch(t, 'y');
     print_grid(t);
     check_grid_rows(t, "ABCDEFGHIJKLMNO?");
     check_grid_row(t, 15, "yPPPPPPPPPPPPPPPPPPx");
 
-    // Clear margins
-    t->mt = 0;
-    t->mb = t->h - 1;
+    clear_margins(t);
 }
 
 void test_clear_screen_tall() {
@@ -514,72 +298,55 @@ void test_clear_screen_tall() {
 }
 
 void test_reverse_nl(vt_term_t *t) {
-
     printf("\nTesting reverse nl margins\n");
-    // Set top and bottom margins
-    t->mt = 2;
-    t->mb = t->h - 5;
+    set_margins(t);
 
-    t->r = t->mt; 
-    t->c = t->w - 1;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MT, W - 1);
     vt_term_putch(t, 'x');
     assert(t->wrap);
     // The cursor is still on the top margin, so reverse index scrolls the region down
     vt_term_reverse_nl(t);
     print_grid(t);
-    assert(!t->wrap);
-    assert(t->r == t->mt);
-    assert(t->c == t->w - 1);
+    check_cursor(t, MT, W - 1, false);
     check_grid_rows(t, "AB ?DEFGHIJKMNOP");
     check_grid_row(t, 3, "CCCCCCCCCCCCCCCCCCCx");
-    vt_term_putch(t, 'y');
-    vt_term_putch(t, 'z');
+    put_str(t, "yz");
     print_grid(t);
     check_grid_rows(t, "AB??DEFGHIJKMNOP");
     check_grid_row(t, 2, "                   y");
     check_grid_row(t, 3, "zCCCCCCCCCCCCCCCCCCx");
 
-    t->r = t->mt; 
-    t->c = 2;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MT, 2);
     vt_term_putch(t, 'x');
     vt_term_reverse_nl(t);
     print_grid(t);
-    vt_term_putch(t, 'y');
-    vt_term_putch(t, 'z');
+    put_str(t, "yz");
     print_grid(t);
     check_grid_rows(t, "AB??DEFGHIJKMNOP");
     check_grid_row(t, 2, "   yz               ");
     check_grid_row(t, 3, "CCxCCCCCCCCCCCCCCCCC");
 
-    // Clear margins
-    t->mt = 0;
-    t->mb = t->h - 1;
+    clear_margins(t);
 }
 
 void test_nl(vt_term_t *t) {
     printf("\nTesting nl margins\n");
-    // Set top and bottom margins
-    t->mt = 2;
-    t->mb = t->h - 5;
+    set_margins(t);
 
-    t->r = t->mb; 
-    t->c = t->w - 1;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MB, W - 1);
     vt_term_putch(t, 'x');
     assert(t->wrap);
     // LF scrolls the region but keeps the column (no implicit CR)
     vt_term_nl(t);
     print_grid(t);
-    assert(!t->wrap);
-    assert(t->r == t->mb);
-    assert(t->c == t->w - 1);
+    check_cursor(t, MB, W - 1, false);
     check_grid_rows(t, "ABDEFGHIJK? MNOP");
     check_grid_row(t, 10, "LLLLLLLLLLLLLLLLLLLx");
     // y fills the last column, z wraps and scrolls the region again
-    vt_term_putch(t, 'y');
-    vt_term_putch(t, 'z');
+    put_str(t, "yz");
     print_grid(t);
     check_grid_rows(t, "ABEFGHIJK???MNOP");
     check_grid_row(t, 9, "LLLLLLLLLLLLLLLLLLLx");
@@ -587,9 +354,8 @@ void test_nl(vt_term_t *t) {
     check_grid_row(t, 11, "z                   ");
 
     // CR LF after filling a line must not leave a blank line
-    t->r = t->mb;
-    t->c = t->w - 1;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MB, W - 1);
     vt_term_putch(t, 'x');
     vt_term_cr(t);
     vt_term_nl(t);
@@ -599,53 +365,42 @@ void test_nl(vt_term_t *t) {
     check_grid_row(t, 10, "LLLLLLLLLLLLLLLLLLLx");
     check_grid_row(t, 11, "y                   ");
 
-    t->r = t->mt; 
-    t->c = 2;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MT, 2);
     vt_term_putch(t, 'x');
     vt_term_nl(t);
     print_grid(t);
-    vt_term_putch(t, 'y');
-    vt_term_putch(t, 'z');
+    put_str(t, "yz");
     print_grid(t);
     check_grid_rows(t, "AB??EFGHIJKLMNOP");
     check_grid_row(t, 2, "CCxCCCCCCCCCCCCCCCCC");
     check_grid_row(t, 3, "DDDyzDDDDDDDDDDDDDDD");
 
-    // Clear margins
-    t->mt = 0;
-    t->mb = t->h - 1;
+    clear_margins(t);
 }
 
 void test_cr(vt_term_t *t) {
     printf("\nTesting cr margins\n");
-    // Set top and bottom margins
-    t->mt = 2;
-    t->mb = t->h - 5;
+    set_margins(t);
 
-    t->r = t->mb; 
-    t->c = t->w - 1;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MB, W - 1);
     vt_term_putch(t, 'x');
     assert(t->wrap);
     // CR cancels the pending wrap and returns to the start of the same row
     vt_term_cr(t);
     print_grid(t);
-    assert(!t->wrap);
-    assert(t->r == t->mb);
-    assert(t->c == 0);
+    check_cursor(t, MB, 0, false);
     check_grid_rows(t, "ABCDEFGHIJK?MNOP");
     check_grid_row(t, 11, "LLLLLLLLLLLLLLLLLLLx");
-    vt_term_putch(t, 'y');
-    vt_term_putch(t, 'z');
+    put_str(t, "yz");
     print_grid(t);
     check_grid_rows(t, "ABCDEFGHIJK?MNOP");
     check_grid_row(t, 11, "yzLLLLLLLLLLLLLLLLLx");
 
     // Same mid-screen, inside the margins
-    t->r = 5;
-    t->c = t->w - 1;
     set_grid_rows(t);
+    vt_term_cursor_set(t, 5, W - 1);
     vt_term_putch(t, 'x');
     vt_term_cr(t);
     vt_term_putch(t, 'y');
@@ -653,29 +408,25 @@ void test_cr(vt_term_t *t) {
     check_grid_rows(t, "ABCDE?GHIJKLMNOP");
     check_grid_row(t, 5, "yFFFFFFFFFFFFFFFFFFx");
 
-    t->r = t->mb; 
-    t->c = 0;
     set_grid_rows(t);
+    vt_term_cursor_set(t, MB, 0);
     vt_term_putch(t, 'x');
     vt_term_cr(t);
     print_grid(t);
     check_grid_rows(t, "ABCDEFGHIJK?MNOP");
     check_grid_row(t, 11, "xLLLLLLLLLLLLLLLLLLL");
-    vt_term_putch(t, 'y');
-    vt_term_putch(t, 'z');
+    put_str(t, "yz");
     print_grid(t);
     check_grid_rows(t, "ABCDEFGHIJK?MNOP");
     check_grid_row(t, 11, "yzLLLLLLLLLLLLLLLLLL");
 
-    // Clear margins
-    t->mt = 0;
-    t->mb = t->h - 1;
+    clear_margins(t);
 }
 
 // Fill the bottom-right cell so a wrap is pending at the bottom margin
 static void set_wrap_pending_bottom(vt_term_t *t) {
     vt_term_clear_screen(t);
-    vt_term_cursor_set(t, t->h - 1, t->w - 1);
+    vt_term_cursor_set(t, H - 1, W - 1);
     vt_term_putch(t, 'A');
     assert(t->wrap);
 }
@@ -683,22 +434,18 @@ static void set_wrap_pending_bottom(vt_term_t *t) {
 // The wrap must be cancelled: the next character goes at (r, c) without scrolling
 static void check_wrap_cancelled(vt_term_t *t, vt_coord_t r, vt_coord_t c) {
     print_grid(t);
-    assert(!t->wrap);
-    assert(t->r == r);
-    assert(t->c == c);
+    check_cursor(t, r, c, false);
     vt_term_putch(t, 'B');
     assert(vt_cell_get_char(t->rp[r][c]) == 'B');
     // A scroll would have moved the 'A' up a row
-    assert(vt_cell_get_char(t->rp[t->h - 2][t->w - 1]) != 'A');
-    if (r != t->h - 1 || c != t->w - 1) {
-        assert(vt_cell_get_char(t->rp[t->h - 1][t->w - 1]) == 'A');
+    assert(vt_cell_get_char(t->rp[H - 2][W - 1]) != 'A');
+    if (r != H - 1 || c != W - 1) {
+        assert(vt_cell_get_char(t->rp[H - 1][W - 1]) == 'A');
     }
 }
 
 void test_wrap_cancelled_by_cursor_moves(vt_term_t *t) {
     printf("\nTesting cursor moves cancel a pending wrap\n");
-    vt_coord_t br = t->h - 1;
-    vt_coord_t bc = t->w - 1;
 
     set_wrap_pending_bottom(t);
     vt_term_cursor_set(t, 0, 0);
@@ -706,37 +453,37 @@ void test_wrap_cancelled_by_cursor_moves(vt_term_t *t) {
 
     set_wrap_pending_bottom(t);
     vt_term_cursor_set_col(t, 3);
-    check_wrap_cancelled(t, br, 3);
+    check_wrap_cancelled(t, H - 1, 3);
 
     set_wrap_pending_bottom(t);
     vt_term_cursor_set_row(t, 4);
-    check_wrap_cancelled(t, 4, bc);
+    check_wrap_cancelled(t, 4, W - 1);
 
     set_wrap_pending_bottom(t);
     vt_term_cursor_up(t, 1);
-    check_wrap_cancelled(t, br - 1, bc);
+    check_wrap_cancelled(t, H - 2, W - 1);
 
     set_wrap_pending_bottom(t);
     vt_term_cursor_down(t, 1);
-    check_wrap_cancelled(t, br, bc);
+    check_wrap_cancelled(t, H - 1, W - 1);
 
     set_wrap_pending_bottom(t);
     vt_term_cursor_left(t, 1);
-    check_wrap_cancelled(t, br, bc - 1);
+    check_wrap_cancelled(t, H - 1, W - 2);
 
     set_wrap_pending_bottom(t);
     vt_term_cursor_right(t, 1);
-    check_wrap_cancelled(t, br, bc);
+    check_wrap_cancelled(t, H - 1, W - 1);
 
     set_wrap_pending_bottom(t);
     vt_term_next_line_up(t, 1);
-    check_wrap_cancelled(t, br - 1, 0);
+    check_wrap_cancelled(t, H - 2, 0);
 
     set_wrap_pending_bottom(t);
     vt_term_next_line_down(t, 1);
-    check_wrap_cancelled(t, br, 0);
+    check_wrap_cancelled(t, H - 1, 0);
 
-    t->r = 2; t->c = 3;
+    vt_term_cursor_set(t, 2, 3);
     vt_term_save_cursor(t);
     set_wrap_pending_bottom(t);
     vt_term_restore_cursor(t);
@@ -746,71 +493,64 @@ void test_wrap_cancelled_by_cursor_moves(vt_term_t *t) {
 // Write the last column of row 5 so a wrap is pending there
 static void set_wrap_pending_row5(vt_term_t *t) {
     set_grid_cols(t);
-    vt_term_cursor_set(t, 5, t->w - 1);
+    vt_term_cursor_set(t, 5, W - 1);
     vt_term_putch(t, 'x');
     assert(t->wrap);
-}
-
-// The edit must have acted on row 5 and left the cursor there with no wrap pending
-static void check_edit_row5(vt_term_t *t, char *row5) {
-    print_grid(t);
-    assert(!t->wrap);
-    assert(t->r == 5);
-    assert(t->c == t->w - 1);
-    check_grid_row(t, 5, row5);
 }
 
 void test_wrap_pending_edits(vt_term_t *t) {
     printf("\nTesting edits with a pending wrap act on the written row\n");
 
-    set_wrap_pending_row5(t);
-    vt_term_erase_in_line(t, 0);
-    check_edit_row5(t, "ABCDEFGHIJKLMNOPQRS ");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
+    // Single-row edits: only row 5 changes
+    static const struct {
+        row_edit_fn_t fn;
+        uint32_t p;
+        const char *row5;
+    } cases[] = {
+        { vt_term_erase_in_line,     0, "ABCDEFGHIJKLMNOPQRS " },
+        { vt_term_erase_in_line,     1, BLANK },
+        { vt_term_erase_in_line,     2, BLANK },
+        { vt_term_delete_characters, 1, "ABCDEFGHIJKLMNOPQRS " },
+        { vt_term_insert_characters, 1, "ABCDEFGHIJKLMNOPQRS " },
+    };
+    for (size_t i = 0; i < ARRAY_LEN(cases); ++i) {
+        set_wrap_pending_row5(t);
+        cases[i].fn(t, cases[i].p);
+        print_grid(t);
+        check_cursor(t, 5, W - 1, false);
+        check_grid_row(t, 4, COLS);
+        check_grid_row(t, 5, cases[i].row5);
+        check_grid_row(t, 6, COLS);
+    }
 
-    set_wrap_pending_row5(t);
-    vt_term_erase_in_line(t, 1);
-    check_edit_row5(t, "                    ");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
-
+    // The next character overwrites the last column rather than wrapping
     set_wrap_pending_row5(t);
     vt_term_erase_in_line(t, 2);
-    check_edit_row5(t, "                    ");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
-    // The next character overwrites the last column rather than wrapping
     vt_term_putch(t, 'y');
+    print_grid(t);
     check_grid_row(t, 5, "                   y");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
+    check_grid_row(t, 6, COLS);
 
     set_wrap_pending_row5(t);
     vt_term_erase_in_display(t, 0);
-    check_edit_row5(t, "ABCDEFGHIJKLMNOPQRS ");
-    for(vt_coord_t r = 6; r < t->h; ++r)
-        check_grid_row(t, r, "                    ");
+    print_grid(t);
+    check_cursor(t, 5, W - 1, false);
+    check_grid_row(t, 4, COLS);
+    check_grid_row(t, 5, "ABCDEFGHIJKLMNOPQRS ");
+    check_rows_blank(t, 6, H);
 
     set_wrap_pending_row5(t);
     vt_term_erase_in_display(t, 1);
-    check_edit_row5(t, "                    ");
-    for(vt_coord_t r = 0; r < 5; ++r)
-        check_grid_row(t, r, "                    ");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
-
-    set_wrap_pending_row5(t);
-    vt_term_delete_characters(t, 1);
-    check_edit_row5(t, "ABCDEFGHIJKLMNOPQRS ");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
-
-    set_wrap_pending_row5(t);
-    vt_term_insert_characters(t, 1);
-    check_edit_row5(t, "ABCDEFGHIJKLMNOPQRS ");
-    check_grid_row(t, 6, "ABCDEFGHIJKLMNOPQRST");
+    print_grid(t);
+    check_cursor(t, 5, W - 1, false);
+    check_rows_blank(t, 0, 6);
+    check_grid_row(t, 6, COLS);
 }
 
 void test_repeat(vt_term_t *t) {
     printf("\nTesting repeat\n");
     set_grid_cols(t);
-    t->r = 5;
-    t->c = 0;
+    vt_term_cursor_set(t, 5, 0);
     vt_term_putch(t, 'a');
     vt_term_repeat(t, 3);
     print_grid(t);
@@ -825,22 +565,18 @@ void test_repeat(vt_term_t *t) {
 
     // Nothing to repeat at the start of a line
     set_grid_cols(t);
-    t->r = 5;
-    t->c = 0;
+    vt_term_cursor_set(t, 5, 0);
     vt_term_repeat(t, 2);
-    check_grid_row(t, 5, "ABCDEFGHIJKLMNOPQRST");
+    check_grid_row(t, 5, COLS);
 }
 
 int main() {
-    const vt_coord_t w = 20;
-    const vt_coord_t h = 16;
-    vt_cell_t grid[h][w];
+    vt_cell_t grid[H][W];
     vt_term_t t;
-    vt_term_init(&t, (vt_cell_t*)grid, w, h);
-    assert(t.c == 0);
-    assert(t.r == 0);
-    assert(t.w == w);
-    assert(t.h == h);
+    vt_term_init(&t, (vt_cell_t*)grid, W, H);
+    check_cursor(&t, 0, 0, false);
+    assert(t.w == W);
+    assert(t.h == H);
 
     // Check the screen is blank on start-up
     printf("Initial display check\n");
@@ -863,5 +599,4 @@ int main() {
 
     printf("all ok\n");
     return 0;
-}   
-
+}

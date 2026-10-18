@@ -114,7 +114,7 @@ void set_grid_cols(vt_term_t *t) {
     } 
 }
 
-void check_grid_rows(vt_term_t *t, char* chs) {
+void check_grid_rows(vt_term_t *t, const char* chs) {
     vt_coord_t w = t->w;
     vt_coord_t h = t->h;    
     for (vt_coord_t c = 0; c < w; ++c) {
@@ -126,7 +126,7 @@ void check_grid_rows(vt_term_t *t, char* chs) {
     }
 }
 
-void check_grid_row(vt_term_t *t, vt_coord_t r, char* chs) {
+void check_grid_row(vt_term_t *t, vt_coord_t r, const char* chs) {
     vt_coord_t w = t->w;
     for (vt_coord_t c = 0; c < w; ++c) {
         vt_cell_t ct = t->rp[r][c];
