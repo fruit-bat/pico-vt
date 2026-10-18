@@ -43,6 +43,13 @@ void vt_emu_set_charmap(
     e->charmap = charmap;
 }
 
+void vt_emu_set_alt_grid(
+    vt_emu_t *e,
+    vt_cell_t* grid
+) {
+    vt_term_alt_init(&e->term, grid);
+}
+
 // Write a non-ASCII code point, taking its width into account
 static void vt_emu_put_cp(
     vt_emu_t *e,
@@ -168,7 +175,7 @@ uint32_t vt_emu_get_p1(vt_parser_t* p, uint32_t i) {
 static void vt_emu_sgr(vt_emu_t* const e) {
     vt_term_t* const t = &e->term;
     vt_parser_t* const p = &e->parser;
-    const static vt_cell_flags_t zfb[] = {
+    static const vt_cell_flags_t zfb[] = {
         VT_CELL_FLAGS_NORMAL         ,
         VT_CELL_FLAGS_BOLD           ,
         VT_CELL_FLAGS_DIM            ,
@@ -318,6 +325,61 @@ static void vt_emu_sgr(vt_emu_t* const e) {
     }
 }
 
+// DECSC - save the cursor, attributes and character sets
+static void vt_emu_save_cursor(
+    vt_emu_t *e
+) {
+    vt_term_save_cursor(&e->term);
+    e->s_g_dec[0] = e->g_dec[0];
+    e->s_g_dec[1] = e->g_dec[1];
+    e->s_gl = e->gl;
+}
+
+// DECRC - restore the cursor, attributes and character sets
+static void vt_emu_restore_cursor(
+    vt_emu_t *e
+) {
+    vt_term_restore_cursor(&e->term);
+    e->g_dec[0] = e->s_g_dec[0];
+    e->g_dec[1] = e->s_g_dec[1];
+    e->gl = e->s_gl;
+}
+
+// Alternate screen private modes (as xterm)
+static void vt_emu_alt_screen(
+    vt_emu_t *e,
+    uint32_t mode,
+    bool on
+) {
+    vt_term_t* const t = &e->term;
+    switch (mode) {
+        case 47:   // Switch screen
+            vt_term_alt_set(t, on);
+            break;
+        case 1047: // Switch screen, clearing the alternate screen when leaving it
+            if (!on && t->alt_active) vt_term_erase_in_display(t, 2);
+            vt_term_alt_set(t, on);
+            break;
+        case 1048: // Save/restore the cursor
+            if (on) vt_emu_save_cursor(e);
+            else vt_emu_restore_cursor(e);
+            break;
+        case 1049: // Save the cursor, switch and clear / switch back and restore the cursor
+            if (on) {
+                vt_emu_save_cursor(e);
+                if (t->alt && !t->alt_active) {
+                    vt_term_alt_set(t, true);
+                    vt_term_erase_in_display(t, 2);
+                }
+            }
+            else {
+                vt_term_alt_set(t, false);
+                vt_emu_restore_cursor(e);
+            }
+            break;
+    }
+}
+
 // SM/RM - set or reset the modes listed in the parameters
 static void vt_emu_set_modes(
     vt_emu_t *e,
@@ -333,6 +395,10 @@ static void vt_emu_set_modes(
                 case 6: mode = VT_TERM_MODE_ORIGIN; break;   // DECOM
                 case 7: mode = VT_TERM_MODE_AUTOWRAP; break; // DECAWM
                 case 25: mode = VT_TERM_MODE_CURSOR; break;  // DECTCEM
+                case 47:
+                case 1047:
+                case 1048:
+                case 1049: vt_emu_alt_screen(e, p->params[i], on); break;
             }
         }
         else {
@@ -359,7 +425,7 @@ static void vt_emu_put_byte(
     DEBUG("Action %d\n", a);
     // Ignore private variants (e.g. ESC [ > c) of sequences that are not supported.
     // DECSED/DECSEL (ESC [ ? J/K) act as ED/EL as there are no protected characters.
-    if (p->prefix && !(
+    if (p->prefix && vt_parser_in_ground(p) && !(
         ((a == VT_A_SM || a == VT_A_RM) && p->prefix == '?') ||
         ((a == VT_A_ED || a == VT_A_EL) && p->prefix == '?')
     )) {
@@ -505,17 +571,11 @@ static void vt_emu_put_byte(
         break;
     case VT_A_SAVE_CUR:    // VT100 Save Cursor Position (ESC 7)
         DEBUG("VT_A_SAVE_CUR\n");
-        vt_term_save_cursor(t);
-        e->s_g_dec[0] = e->g_dec[0];
-        e->s_g_dec[1] = e->g_dec[1];
-        e->s_gl = e->gl;
+        vt_emu_save_cursor(e);
         break;
     case VT_A_RESTORE_CUR: // VT100 Restore Cursor Position (ESC 8)
         DEBUG("VT_A_RESTORE_CUR\n");
-        vt_term_restore_cursor(t);
-        e->g_dec[0] = e->s_g_dec[0];
-        e->g_dec[1] = e->s_g_dec[1];
-        e->gl = e->s_gl;
+        vt_emu_restore_cursor(e);
         break;
     case VT_A_CUU: {        // CUU - Cursor Up
         const uint32_t n = vt_emu_get_p1(p, 0);
@@ -624,7 +684,7 @@ static void vt_emu_put_byte(
         // A missing or 0 bottom, or one past the screen, means the last row
         const uint32_t mt = vt_emu_get_p1(p, 0) - 1;
         const uint32_t b = vt_emu_get_p0(p, 1);
-        const uint32_t mb = (b == 0 || b > t->h) ? t->h - 1 : b - 1;
+        const uint32_t mb = (b == 0 || b > t->h) ? t->h - 1u : b - 1;
         DEBUG("VT_A_DECSTBM %lu, %lu\n", (ul)mt, (ul)mb);
         if (mt < mb) vt_term_margin_set(t, mt, mb);
         break;

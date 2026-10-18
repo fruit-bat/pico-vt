@@ -173,7 +173,7 @@ const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch);
 
 const vt_state_t* vt_parser_put_str(vt_parser_t *p, vt_char_t* s);
 
-const vt_a_t vt_parser_action_from_state(const vt_state_t *s);
+vt_a_t vt_parser_action_from_state(const vt_state_t *s);
 
 #ifdef __cplusplus
 }

@@ -147,9 +147,44 @@ void vt_term_putch(
 }
 
 
+void vt_term_alt_set(
+    vt_term_t* t, // The terminal
+    bool on       // Use the alternate screen
+) {
+    if (!t->alt || t->alt_active == on) return;
+    // Swap the row pointers so rp is always the screen in use
+    for (vt_coord_t r = 0; r < t->h; ++r) {
+        vt_cell_t* const tmp = t->rp[r];
+        t->rp[r] = t->alt_rp[r];
+        t->alt_rp[r] = tmp;
+    }
+    t->alt_active = on;
+    t->wrap = false;
+}
+
+void vt_term_alt_init(
+    vt_term_t* t,   // The terminal
+    vt_cell_t* grid // Cell grid for the alternate screen
+) {
+    vt_term_alt_set(t, false);
+    t->alt = grid != NULL;
+    if (!grid) return;
+    const vt_cell_t blank = vt_cell_combine(
+        vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS),
+        (vt_char_t)' ');
+    for (vt_coord_t r = 0; r < t->h; ++r) {
+        t->alt_rp[r] = grid;
+        for (vt_coord_t c = 0; c < t->w; ++c) grid[c] = blank;
+        grid += t->w;
+    }
+}
+
 void vt_term_reset(
     vt_term_t* t  // The terminal
 ) {
+    // Back to the normal screen
+    vt_term_alt_set(t, false);
+
     // Default modes
     t->flags = VT_TERM_MODES_DEFAULT;
 
@@ -204,6 +239,10 @@ void vt_term_init(
     // Set the terminal size
     t->w = w; // Terminal width
     t->h = h; // Terminal height
+
+    // No alternate screen until one is provided
+    t->alt = false;
+    t->alt_active = false;
 
     // TODO perhaps these should be passed in?
     // Initialize the row pointers
@@ -382,7 +421,7 @@ void vt_term_insert_characters(
 )
 {
     t->wrap = false;
-    if (n > t->w - t->c)
+    if (n > (uint32_t)(t->w - t->c))
         n = t->w - t->c;
     if (n == 0)
         return;
@@ -401,7 +440,7 @@ void vt_term_delete_characters(
 )
 {
     t->wrap = false;
-    if (n > t->w - t->c)
+    if (n > (uint32_t)(t->w - t->c))
         n = t->w - t->c;
     if (n == 0)
         return;
@@ -422,7 +461,7 @@ void vt_term_erase_characters(
 )
 {
     t->wrap = false;
-    if (n > t->w - t->c)
+    if (n > (uint32_t)(t->w - t->c))
         n = t->w - t->c;
     vt_term_clear_line(t, t->r, t->c, t->c + n);
 }

@@ -1148,6 +1148,51 @@ void test_nl_outside_margins(vt_term_t *t) {
     clear_margins(t);
 }
 
+void test_alt_screen(vt_term_t *t) {
+    printf("\nTesting alternate screen\n");
+    vt_cell_t alt[H][W];
+
+    // Without an alternate screen switching does nothing
+    set_grid_rows(t);
+    vt_term_alt_set(t, true);
+    assert(!t->alt_active);
+    check_grid_rows(t, ROWS);
+
+    // The alternate screen starts blank
+    for (vt_coord_t r = 0; r < H; ++r)
+        for (vt_coord_t c = 0; c < W; ++c) alt[r][c] = 0;
+    vt_term_alt_init(t, (vt_cell_t*)alt);
+    assert(t->alt && !t->alt_active);
+    check_grid_rows(t, ROWS);
+    vt_term_alt_set(t, true);
+    assert(t->alt_active);
+    check_grid_blank(t);
+
+    // Writing and scrolling on the alternate screen leave the normal screen alone
+    vt_term_cursor_set(t, H - 1, 0);
+    put_str(t, "alt");
+    vt_term_nl(t);
+    check_grid_row(t, H - 2, "alt                 ");
+
+    vt_term_alt_set(t, false);
+    assert(!t->alt_active);
+    check_grid_rows(t, ROWS);
+
+    // Switching back shows the alternate screen as it was left
+    vt_term_alt_set(t, true);
+    check_grid_row(t, H - 2, "alt                 ");
+
+    // Reset returns to the normal screen
+    vt_term_reset(t);
+    assert(!t->alt_active && t->alt);
+
+    // Removing the alternate screen
+    vt_term_alt_set(t, true);
+    vt_term_alt_init(t, NULL);
+    assert(!t->alt && !t->alt_active);
+    check_grid_blank(t);
+}
+
 int main() {
     vt_cell_t grid[H][W];
     vt_term_t t;
@@ -1190,6 +1235,7 @@ int main() {
     test_scroll_start_row(&t);
     test_nl_outside_margins(&t);
     test_reset(&t);
+    test_alt_screen(&t);
     test_clear_screen_tall();
 
     printf("all ok\n");

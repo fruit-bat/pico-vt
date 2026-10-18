@@ -107,6 +107,21 @@ DEC special graphics (line drawing selected with `ESC ( 0`) is converted to the 
 goes through the same map. Wide characters (CJK, emoji) take two cells (the glyph then a space) and
 combining marks are dropped.
 
+### Alternate screen
+
+Full screen programs (vim, less, htop) switch to an alternate screen and back, so the screen is restored
+when they exit. It needs a second grid, the same size as the first, so it is optional:
+
+```C
+static vt_cell_t _alt_screen[CHAR_ROWS][CHAR_COLS];
+
+vt_emu_set_alt_grid(&vt_emu, (vt_cell_t*)_alt_screen);
+```
+
+Switching swaps the row pointers, so `term.rp` is always the screen in use and the renderer needs no
+changes. Without an alternate grid the switch is ignored (the screen is not cleared) but the cursor is
+still saved and restored.
+
 ### Modes
 
 Modes are set by the host with SM/RM (`ESC [ n h` / `ESC [ n l`) or directly with `vt_term_mode_set()`:
@@ -119,6 +134,8 @@ Modes are set by the host with SM/RM (`ESC [ n h` / `ESC [ n l`) or directly wit
 | `VT_TERM_MODE_INSERT` | `4` | off | Insert rather than overwrite characters (IRM) |
 | `VT_TERM_MODE_LNM` | `20` | off | LF, VT and FF also return to column 0 (LNM) |
 
+The alternate screen modes `?47`, `?1047`, `?1048` and `?1049` are also supported (as xterm).
+
 ### Supported sequences
 
 | Kind | Supported |
@@ -130,19 +147,21 @@ Modes are set by the host with SM/RM (`ESC [ n h` / `ESC [ n l`) or directly wit
 | Scrolling | DECSTBM `r`, SU `S`, SD `T` |
 | Tabs | CHT `I`, CBT `Z`, TBC `g` |
 | Attributes | SGR `m`: styles 0-9 and 22-29, colours 30-37/39, 40-47/49, 90-97, 100-107, `38;5;n`, `48;5;n`, `38;2;r;g;b`, `48;2;r;g;b` |
-| Modes | SM/RM `h` `l` (see above) |
+| Modes | SM/RM `h` `l`: `4`, `20`, `?6`, `?7`, `?25`, `?47`, `?1047`, `?1048`, `?1049` |
 | Reports | DA `c`, DSR `5n` and `6n` |
 
 OSC strings (e.g. window titles) are consumed and ignored. Unsupported private sequences (`ESC [ ? ...`,
-`ESC [ > ...`) are ignored.
+`ESC [ > ...`) are ignored. As xterm, C0 controls within a sequence are executed without interrupting it,
+CAN and SUB abandon it and ESC starts a new one.
 
 ## Tests
 
-The tests are plain C programs, one per module, built and run by a script:
+The tests are plain C programs, one per module. Build and run them all, with AddressSanitizer and
+UndefinedBehaviorSanitizer, with:
 
 ```sh
-cd src
-for t in *_test.sh; do bash "$t" || break; done
+make test
 ```
 
-They are also worth running with `-fsanitize=address,undefined` added to the `cc` line.
+They also run on GitHub for every push and pull request. Each suite can still be built and run on its
+own with its script in `src` (e.g. `cd src && ./vt_term_test.sh`).

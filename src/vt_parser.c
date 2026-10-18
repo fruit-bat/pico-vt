@@ -325,10 +325,35 @@ bool vt_parser_match_ch(vt_match_t m, vt_char_t ch) {
     }
 }
 
+// Escape and control sequences (but not OSC strings), within which C0 controls
+// are executed without disturbing the sequence (as the DEC VT500 parser and xterm)
+static bool vt_parser_in_sequence(vt_g_t g) {
+    return g == VT_G_ESC || g == VT_G_CSI || g == VT_G_CSI_P || g == VT_G_CSI_F ||
+           g == VT_G_ESC_OB || g == VT_G_ESC_CB;
+}
+
 const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
         
     const vt_state_t* ps = p->state;
     vt_g_t g = ps && !(ps->f & VT_F_FINAL) ? (vt_g_t)ps->n : VT_G_GROUND;
+    if (vt_parser_in_sequence(g) && (ch < 0x20 || ch == VT_M_C0_DEL)) {
+        if (ch == VT_M_C0_CAN || ch == VT_M_C0_SUB) {
+            // Abandon the sequence
+            vt_parser_init(p);
+            return NULL;
+        }
+        if (ch == VT_M_C0_ESC) {
+            // Abandon the sequence and start another
+            g = VT_G_GROUND;
+        }
+        else {
+            // Execute the control (DEL is ignored); the sequence carries on
+            for (uint8_t i = 0; i < COUNT_ARR(vt_states_c0); ++i) {
+                if (vt_states_c0[i].m == ch) return &vt_states_c0[i];
+            }
+            return NULL;
+        }
+    }
     if (g == VT_G_GROUND) {
         p->n_params = 0;
         p->prefix = 0;
@@ -349,7 +374,7 @@ const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
                 p->prefix = ch;
             }
             if (s->f & VT_F_COL_OSC) {
-                if (p->osc_param_len + 2 < COUNT_ARR(p->osc_param)) {
+                if (p->osc_param_len + 2u < COUNT_ARR(p->osc_param)) {
                     p->osc_param[p->osc_param_len++] = ch;
                     p->osc_param[p->osc_param_len] = 0;
                 }
@@ -400,7 +425,7 @@ const vt_state_t* vt_parser_put_str(vt_parser_t *p, vt_char_t* s) {
     return last;
 }
 
-const vt_a_t vt_parser_action_from_state(const vt_state_t *s) {
+vt_a_t vt_parser_action_from_state(const vt_state_t *s) {
     return (s == NULL) || ((s->f & VT_F_FINAL) ==0)
         ? VT_A_NONE
         : s->n;

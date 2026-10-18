@@ -87,6 +87,14 @@ void vt_emu_set_charmap(
     vt_charmap_t charmap
 );
 
+// Provide a grid, the same size as the main one, for the alternate screen used
+// by full screen programs (ESC [ ? 1049 h). Without one (NULL, the default) the
+// alternate screen is not available. Reset does not change this.
+void vt_emu_set_alt_grid(
+    vt_emu_t *e,
+    vt_cell_t* grid
+);
+
 // Set where replies to the host go (reset does not change this)
 void vt_emu_set_reply(
     vt_emu_t *e,

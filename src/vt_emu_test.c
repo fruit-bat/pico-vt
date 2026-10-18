@@ -52,6 +52,13 @@ tio /tmp/myfifo
 #include <assert.h>
 #include <string.h>
 
+#define BLANK_ROW "                    "
+
+// Every cell is a space (whatever its attributes)
+static void check_grid_blank_chars(vt_term_t* t) {
+    for (vt_coord_t r = 0; r < t->h; ++r) check_grid_row(t, r, BLANK_ROW);
+}
+
 // TODO
 // ESC[6n	request cursor position (reports as ESC[#;#R)
 
@@ -976,6 +983,97 @@ void test_dec_graphics(vt_emu_t* e) {
     check_grid_row(t, 0, "q                   ");
 }
 
+void test_controls_in_sequences(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test C0 controls within sequences\n");
+    // BS is executed part way through the CUP
+    vt_emu_put_str(e, (vt_char_t*)"a\033[1;\b2Hb");
+    check_grid_row(t, 0, "ab                  ");
+    assert(t->r == 0 && t->c == 2);
+
+    // CR within ED, and LF within a private mode sequence
+    vt_emu_put_str(e, (vt_char_t*)"\033[2\rJ");
+    check_grid_row(t, 0, BLANK_ROW);
+    assert(t->r == 0 && t->c == 0);
+    vt_emu_put_str(e, (vt_char_t*)"\033[?\n25l");
+    assert(t->r == 1);
+    assert(!vt_term_mode_get(t, VT_TERM_MODE_CURSOR));
+    vt_emu_put_str(e, (vt_char_t*)"\033[?25h");
+
+    // DEL is ignored
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"\033[1;\x7F" "3Hz");
+    check_grid_row(t, 0, "  z                 ");
+
+    // ESC starts a new sequence
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"x\033[1\033[2Jy");
+    check_grid_row(t, 0, " y                  ");
+
+    // CAN and SUB abandon the sequence
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"a\033[2\x18" "b\033[1\x1A" "c");
+    check_grid_row(t, 0, "abc                 ");
+}
+
+void test_alt_screen(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_cell_t alt[16][20];
+    vt_emu_reset(e);
+
+    printf("Test alternate screen\n");
+    // Without an alternate screen 1049 still saves and restores the cursor, and doesn't clear
+    vt_emu_put_str(e, (vt_char_t*)"main\033[3;4H\033[?1049h");
+    assert(!t->alt_active);
+    check_grid_row(t, 0, "main                ");
+    vt_emu_put_str(e, (vt_char_t*)"\033[H\033[?1049l");
+    assert(t->r == 2 && t->c == 3);
+
+    vt_emu_set_alt_grid(e, (vt_cell_t*)alt);
+
+    // 1049: save the cursor, switch and clear; then switch back and restore the cursor
+    vt_emu_put_str(e, (vt_char_t*)"\033[1;31m\033[?1049h");
+    assert(t->alt_active);
+    check_grid_blank_chars(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[m\033[Hfull screen\033[?1049l");
+    assert(!t->alt_active);
+    check_grid_row(t, 0, "main                ");
+    assert(t->r == 2 && t->c == 3);
+    assert(vt_cell_fg_get(t->attr) == 1 && vt_cell_flags_get(t->attr) == VT_CELL_FLAGS_BOLD);
+    vt_emu_put_str(e, (vt_char_t*)"\033[m");
+
+    // 1049 clears the alternate screen each time
+    vt_emu_put_str(e, (vt_char_t*)"\033[?1049h");
+    check_grid_blank_chars(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[?1049l");
+
+    // 47 switches without clearing or moving the cursor
+    vt_emu_put_str(e, (vt_char_t*)"\033[?47hx\033[?47l");
+    check_grid_row(t, 0, "main                ");
+    assert(t->r == 2 && t->c == 4);
+    vt_emu_put_str(e, (vt_char_t*)"\033[?47h");
+    assert(vt_cell_get_char(t->rp[2][3]) == 'x');
+
+    // 1047 clears the alternate screen when leaving it
+    vt_emu_put_str(e, (vt_char_t*)"\033[?47l\033[?1047h");
+    assert(vt_cell_get_char(t->rp[2][3]) == 'x');
+    vt_emu_put_str(e, (vt_char_t*)"\033[?1047l\033[?47h");
+    check_grid_blank_chars(t);
+    vt_emu_put_str(e, (vt_char_t*)"\033[?47l");
+
+    // 1048 saves and restores the cursor
+    vt_emu_put_str(e, (vt_char_t*)"\033[5;6H\033[?1048h\033[H\033[?1048l");
+    assert(t->r == 4 && t->c == 5);
+
+    // Reset returns to the normal screen and keeps the alternate one
+    vt_emu_put_str(e, (vt_char_t*)"\033[?1049h\033c");
+    assert(!t->alt_active && t->alt);
+
+    vt_emu_set_alt_grid(e, NULL);
+}
+
 int main() {
 
     const vt_coord_t w = 20;
@@ -1000,6 +1098,8 @@ int main() {
     test_reset_to_initial_state(&e);
     test_utf8(&e);
     test_dec_graphics(&e);
+    test_controls_in_sequences(&e);
+    test_alt_screen(&e);
     test_repeat_character(&e);
     test_horizontal_tabs(&e);
     // test_stdin(&e);

@@ -75,7 +75,10 @@ typedef struct
     bool s_origin; // Saved origin mode
     bool wrap; // Wrap pending (deferred wrap at the last column)
     uint32_t flags; // Modes (VT_TERM_MODE_xxx)
-    vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers
+    vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers (of the screen in use)
+    vt_cell_t* alt_rp[VT_SCREEN_MAX_ROWS]; // Row pointers of the screen not in use
+    bool alt;        // An alternate screen has been provided
+    bool alt_active; // The alternate screen is in use
 
 } vt_term_t;
 
@@ -107,8 +110,23 @@ void vt_term_init(
     vt_coord_t h  // Terminal height in characters
 );
 
+// Returns to the normal screen if the alternate screen is in use
 void vt_term_reset(
     vt_term_t* t  // The terminal
+);
+
+// Provide a grid (the same size as the main one) for the alternate screen,
+// or NULL for none. The grid is cleared.
+void vt_term_alt_init(
+    vt_term_t* t,   // The terminal
+    vt_cell_t* grid // Cell grid for the alternate screen
+);
+
+// Switch to the alternate (true) or normal (false) screen. Does nothing
+// without an alternate screen.
+void vt_term_alt_set(
+    vt_term_t* t, // The terminal
+    bool on       // Use the alternate screen
 );
 
 void vt_term_save_cursor(
