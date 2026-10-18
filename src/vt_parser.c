@@ -183,11 +183,13 @@ const vt_state_t vt_states_csi_f[] = {
     {'T',          VT_A_SD,           VT_F_FINAL}, // ESC [nT
     {'Z',          VT_A_HTB,          VT_F_FINAL}, // ESC [nZ          - Horizontal tab backward
     {'b',          VT_A_REP,          VT_F_FINAL}, // ESC [nr          - Repeat character
+    {'c',          VT_A_DA,           VT_F_FINAL}, // ESC [c           - Device attributes
     {'f',          VT_A_HVP,          VT_F_FINAL}, // ESC [nf
     {'g',          VT_A_HTC,          VT_F_FINAL}, // ESC [ng          - Clear horizontal tabs
     {'h',          VT_A_SM,           VT_F_FINAL}, // ESC [?n;h
     {'l',          VT_A_RM,           VT_F_FINAL}, // ESC [?n;l
     {'m',          VT_A_SGR,          VT_F_FINAL}, // ESC [n;n;...m
+    {'n',          VT_A_DSR,          VT_F_FINAL}, // ESC [nn          - Device status report
     {'r',          VT_A_DECSTBM,      VT_F_FINAL}, // ESC [t;r
     {'@',          VT_A_ICH,          VT_F_FINAL}, // ESC [n@          - Insert characters
 };

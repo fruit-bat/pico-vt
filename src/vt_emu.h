@@ -36,10 +36,19 @@ extern "C"
 {
 #endif
 
+// Called with bytes the terminal sends back to the host (e.g. a cursor position report)
+typedef void (*vt_emu_reply_t)(
+    void* ctx,           // The context passed to vt_emu_set_reply()
+    const vt_char_t* s,  // The bytes to send
+    uint32_t n           // The number of bytes
+);
+
 typedef struct {
     vt_parser_t parser;
     vt_term_t term;
     vt_tabs_t tabs;
+    vt_emu_reply_t reply; // NULL if replies are not wanted
+    void* reply_ctx;
 } vt_emu_t;
 
 void vt_emu_init(
@@ -61,6 +70,13 @@ void vt_emu_put_str(
 
 void vt_emu_reset(
     vt_emu_t *e
+);
+
+// Set where replies to the host go (reset does not change this)
+void vt_emu_set_reply(
+    vt_emu_t *e,
+    vt_emu_reply_t reply, // NULL for no replies
+    void* ctx             // Passed to reply
 );
 
 #ifdef __cplusplus

@@ -190,12 +190,7 @@ void test_delete_characters(vt_term_t *t) {
     };
     printf("\nDelete characters\n");
     run_row_edit_cases(t, vt_term_delete_characters, cases, ARRAY_LEN(cases));
-
-    // TODO Check attributes
-    /* VT102 manual says the attribute for the newly empty characters
-     * should be the same as the last character moved left, which isn't
-     * what clearline() currently does.
-     */
+    // Attributes of the freed cells are checked in test_erase_uses_current_attr
 }
 
 void test_erase_in_line(vt_term_t *t) {
@@ -574,10 +569,6 @@ static vt_cell_attr_t default_attr(void) {
     return vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS);
 }
 
-static vt_cell_colour_t cell_bg(vt_term_t *t, vt_coord_t r, vt_coord_t c) {
-    return vt_cell_bg_get(vt_cell_get_attr(t->rp[r][c]));
-}
-
 void test_margin_set(vt_term_t *t) {
     printf("\nTesting margin set\n");
     // Setting the margins homes the cursor
@@ -886,45 +877,70 @@ void test_attributes(vt_term_t *t) {
     assert(t->attr == default_attr());
 }
 
-// Cells cleared by erase, insert and scroll take the current attributes
+// An erased cell: a space in the current colours with no other attributes (as xterm)
+static void check_erased(vt_term_t *t, vt_coord_t r, vt_coord_t c) {
+    vt_cell_attr_t a = vt_cell_enc_attr(
+        vt_cell_fg_get(t->attr), vt_cell_bg_get(t->attr), VT_CELL_FLAGS_NORMAL);
+    assert(t->rp[r][c] == vt_cell_combine(a, ' '));
+}
+
+// A cell left alone by an erase still has the default attributes
+static void check_untouched(vt_term_t *t, vt_coord_t r, vt_coord_t c) {
+    assert(vt_cell_get_attr(t->rp[r][c]) == default_attr());
+}
+
+// Cells cleared by erase, insert, delete and scroll take the current colours only
 void test_erase_uses_current_attr(vt_term_t *t) {
-    printf("\nTesting erase uses the current attributes\n");
+    printf("\nTesting erase uses the current colours\n");
     vt_term_reset_attr(t);
+    vt_term_set_fgci(t, 3);
+    vt_term_set_bgci(t, 4);
+    vt_term_flags_add(t, VT_CELL_FLAGS_BOLD | VT_CELL_FLAGS_UNDERLINE | VT_CELL_FLAGS_REVERSE);
 
     set_grid_cols(t);
-    vt_term_set_bgci(t, 4);
     vt_term_cursor_set(t, 5, 7);
     vt_term_erase_in_line(t, 0);
-    assert(cell_bg(t, 5, 6) == VT_TERM_DEFAULT_BG);
-    assert(cell_bg(t, 5, 7) == 4);
-    assert(cell_bg(t, 5, W - 1) == 4);
+    check_untouched(t, 5, 6);
+    check_erased(t, 5, 7);
+    check_erased(t, 5, W - 1);
 
     set_grid_cols(t);
     vt_term_erase_in_display(t, 0);
-    assert(cell_bg(t, 5, 6) == VT_TERM_DEFAULT_BG);
-    assert(cell_bg(t, 5, 7) == 4);
-    assert(cell_bg(t, H - 1, 0) == 4);
+    check_untouched(t, 5, 6);
+    check_erased(t, 5, 7);
+    check_erased(t, H - 1, 0);
 
     set_grid_cols(t);
     vt_term_insert_characters(t, 2);
-    assert(cell_bg(t, 5, 6) == VT_TERM_DEFAULT_BG);
-    assert(cell_bg(t, 5, 7) == 4);
-    assert(cell_bg(t, 5, 8) == 4);
-    assert(cell_bg(t, 5, 9) == VT_TERM_DEFAULT_BG);
+    check_untouched(t, 5, 6);
+    check_erased(t, 5, 7);
+    check_erased(t, 5, 8);
+    check_untouched(t, 5, 9);
+
+    set_grid_cols(t);
+    vt_term_delete_characters(t, 3);
+    check_untouched(t, 5, W - 4);
+    check_erased(t, 5, W - 3);
+    check_erased(t, 5, W - 1);
 
     set_grid_rows(t);
     vt_term_scroll_up(t, 0, 1);
-    assert(cell_bg(t, H - 2, 0) == VT_TERM_DEFAULT_BG);
-    assert(cell_bg(t, H - 1, 0) == 4);
+    check_untouched(t, H - 2, 0);
+    check_erased(t, H - 1, 0);
 
     set_grid_rows(t);
     vt_term_scroll_down(t, 0, 1);
-    assert(cell_bg(t, 0, 0) == 4);
-    assert(cell_bg(t, 1, 0) == VT_TERM_DEFAULT_BG);
+    check_erased(t, 0, 0);
+    check_untouched(t, 1, 0);
 
     vt_term_clear_screen(t);
-    assert(cell_bg(t, 0, 0) == 4);
-    assert(cell_bg(t, H - 1, W - 1) == 4);
+    check_erased(t, 0, 0);
+    check_erased(t, H - 1, W - 1);
+
+    // Written characters still take all the attributes
+    vt_term_cursor_set(t, 0, 0);
+    vt_term_putch(t, 'x');
+    assert(t->rp[0][0] == vt_cell_combine(t->attr, 'x'));
 
     vt_term_reset_attr(t);
     vt_term_clear_screen(t);

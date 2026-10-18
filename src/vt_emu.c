@@ -2,6 +2,7 @@
 
 #include "vt_emu.h"
 #include <stdio.h>
+#include <string.h>
 
 //#define DEBUG(...) printf(__VA_ARGS__)
 #define DEBUG(...) 
@@ -27,6 +28,35 @@ void vt_emu_init(
         w,
         8
     );
+    vt_emu_set_reply(e, NULL, NULL);
+}
+
+void vt_emu_set_reply(
+    vt_emu_t *e,
+    vt_emu_reply_t reply,
+    void* ctx
+) {
+    e->reply = reply;
+    e->reply_ctx = ctx;
+}
+
+// Append a decimal number to s, returning the new end
+static char* vt_emu_put_dec(
+    char *s,
+    uint32_t v
+) {
+    char tmp[10];
+    int n = 0;
+    do { tmp[n++] = '0' + v % 10; v /= 10; } while (v);
+    while (n) *s++ = tmp[--n];
+    return s;
+}
+
+static void vt_emu_reply(
+    vt_emu_t *e,
+    const char *s
+) {
+    if (e->reply) e->reply(e->reply_ctx, (const vt_char_t*)s, (uint32_t)strlen(s));
 }
 
 void vt_emu_reset(
@@ -239,6 +269,7 @@ static void vt_emu_set_modes(
             switch (p->params[i]) {
                 case 6: mode = VT_TERM_MODE_ORIGIN; break;   // DECOM
                 case 7: mode = VT_TERM_MODE_AUTOWRAP; break; // DECAWM
+                case 25: mode = VT_TERM_MODE_CURSOR; break;  // DECTCEM
             }
         }
         else {
@@ -488,7 +519,32 @@ void vt_emu_put_ch(
     }
     case VT_A_DA:          // Device Attributes
         DEBUG("VT_A_DA\n");
+        // Primary DA: a VT100 with Advanced Video Option
+        if (vt_emu_get_p0(p, 0) == 0) vt_emu_reply(e, "\033[?1;2c");
         break;
+    case VT_A_DSR: {       // Device Status Report
+        const uint32_t n = vt_emu_get_p0(p, 0);
+        DEBUG("VT_A_DSR %lu\n", (ul)n);
+        if (n == 5) {
+            // Status: OK
+            vt_emu_reply(e, "\033[0n");
+        }
+        else if (n == 6) {
+            // Cursor position report, 1 based and relative to the margins in origin mode
+            char s[32];
+            char *q = s;
+            const uint32_t r = t->r - (vt_term_mode_get(t, VT_TERM_MODE_ORIGIN) ? t->mt : 0);
+            *q++ = '\033';
+            *q++ = '[';
+            q = vt_emu_put_dec(q, r + 1);
+            *q++ = ';';
+            q = vt_emu_put_dec(q, t->c + 1);
+            *q++ = 'R';
+            *q = 0;
+            vt_emu_reply(e, s);
+        }
+        break;
+    }
     case VT_A_RM:          // Reset Mode
         vt_emu_set_modes(e, false);
         break;

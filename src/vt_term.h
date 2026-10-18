@@ -46,7 +46,8 @@ extern "C"
 #define VT_TERM_MODE_ORIGIN   (1u << 1) // DECOM  (?6) cursor rows relative to the margins
 #define VT_TERM_MODE_INSERT   (1u << 2) // IRM    (4)  insert characters rather than overwrite
 #define VT_TERM_MODE_LNM      (1u << 3) // LNM    (20) LF, VT and FF also do a CR
-#define VT_TERM_MODES_DEFAULT VT_TERM_MODE_AUTOWRAP
+#define VT_TERM_MODE_CURSOR   (1u << 4) // DECTCEM (?25) cursor visible (for the renderer)
+#define VT_TERM_MODES_DEFAULT (VT_TERM_MODE_AUTOWRAP | VT_TERM_MODE_CURSOR)
 
 // VT100-derived terminals have a deferred wrap behavior: writing a
 // character in the last column leaves the cursor in that column and sets

@@ -101,6 +101,7 @@ typedef enum {
     VT_A_SGR,         // Select Graphic Rendition
     VT_A_DECSTBM,     // Set Top and Bottom Margins
     VT_A_DA,          // Device Attributes
+    VT_A_DSR,         // Device Status Report
     VT_A_RM,          // Reset Mode
     VT_A_SM,          // Set Mode
     VT_A_SU,          // Scroll Up

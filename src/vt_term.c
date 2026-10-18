@@ -70,13 +70,24 @@ void vt_term_mode_set(
     if (!(t->flags & VT_TERM_MODE_AUTOWRAP)) t->wrap = false;
 }
 
+// Erased cells take the current colours but no other attributes (as xterm)
+static vt_cell_t vt_term_blank(
+    vt_term_t *t // The terminal
+) {
+    vt_cell_attr_t a = vt_cell_enc_attr(
+        vt_cell_fg_get(t->attr),
+        vt_cell_bg_get(t->attr),
+        VT_CELL_FLAGS_NORMAL);
+    return vt_cell_combine(a, (vt_char_t)' ');
+}
+
 static void vt_term_clear_line(
     vt_term_t *t,  // The terminal
     vt_coord_t ri, // Row index
     vt_coord_t sc, // The start column
     vt_coord_t ec  // The end column
 ) {
-    vt_cell_t c = vt_cell_combine(t->attr, (vt_char_t)' ');
+    vt_cell_t c = vt_term_blank(t);
     vt_cell_t *rp = t->rp[ri];
     if (ec > t->w)
         ec = t->w;
@@ -401,12 +412,8 @@ void vt_term_delete_characters(
     {
         rp[to++] = rp[fr++];
     }
-    vt_cell_attr_t a = vt_cell_get_attr(rp[t->w - n]); // Copied from libtmt; is this correct?
-    vt_cell_t cb = vt_cell_combine(a, (vt_char_t)' ');
-    while (to < t->w)
-    {
-        rp[to++] = cb;
-    }
+    // The cells freed at the end of the line are erased (as xterm)
+    vt_term_clear_line(t, t->r, to, t->w);
 }
 /**
  * @brief Erases part or all of the current line in the terminal based on the specified mode.

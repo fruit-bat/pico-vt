@@ -50,6 +50,7 @@ tio /tmp/myfifo
 #include "vt_term_test_utils.h"
 #include <stdio.h>
 #include <assert.h>
+#include <string.h>
 
 // TODO
 // ESC[6n	request cursor position (reports as ESC[#;#R)
@@ -585,9 +586,15 @@ void test_modes(vt_emu_t* e) {
 
     // Several modes in one sequence
     vt_emu_put_str(e, (vt_char_t*)"\033[?6;7l\033[4;20h");
-    assert(t->flags == (VT_TERM_MODE_INSERT | VT_TERM_MODE_LNM));
+    assert(t->flags == (VT_TERM_MODE_INSERT | VT_TERM_MODE_LNM | VT_TERM_MODE_CURSOR));
     vt_emu_put_str(e, (vt_char_t*)"\033[4;20l\033[?7h");
     assert(t->flags == VT_TERM_MODES_DEFAULT);
+
+    // DECTCEM: cursor visibility
+    vt_emu_put_str(e, (vt_char_t*)"\033[?25l");
+    assert(!vt_term_mode_get(t, VT_TERM_MODE_CURSOR));
+    vt_emu_put_str(e, (vt_char_t*)"\033[?25h");
+    assert(vt_term_mode_get(t, VT_TERM_MODE_CURSOR));
 
     // IRM: insert rather than overwrite
     vt_emu_reset(e);
@@ -673,6 +680,60 @@ void test_stdin(vt_emu_t* e) {
     }
 }
 
+// Collects replies sent to the host
+static char reply_buf[64];
+static uint32_t reply_len;
+
+static void capture_reply(void* ctx, const vt_char_t* s, uint32_t n) {
+    assert(ctx == reply_buf);
+    assert(reply_len + n < sizeof(reply_buf));
+    memcpy(reply_buf + reply_len, s, n);
+    reply_len += n;
+    reply_buf[reply_len] = 0;
+}
+
+// Send a sequence and check the reply (empty for none)
+static void check_reply(vt_emu_t* e, const char* send, const char* expect) {
+    reply_len = 0;
+    reply_buf[0] = 0;
+    vt_emu_put_str(e, (vt_char_t*)send);
+    assert(strcmp(reply_buf, expect) == 0);
+}
+
+void test_replies(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test replies\n");
+    // Without a reply function nothing is sent (and nothing breaks)
+    vt_emu_put_str(e, (vt_char_t*)"\033[c\033[6n");
+
+    vt_emu_set_reply(e, capture_reply, reply_buf);
+
+    // Primary device attributes
+    check_reply(e, "\033[c", "\033[?1;2c");
+    check_reply(e, "\033[0c", "\033[?1;2c");
+    check_reply(e, "\033[1c", "");
+    check_reply(e, "\033[>c", "");
+
+    // Device status and cursor position reports
+    check_reply(e, "\033[5n", "\033[0n");
+    check_reply(e, "\033[6n", "\033[1;1R");
+    check_reply(e, "\033[12;17H\033[6n", "\033[12;17R");
+    check_reply(e, "\033[3n", "");
+
+    // In origin mode the row is relative to the top margin
+    check_reply(e, "\033[5;10r\033[?6h\033[3;4H\033[6n", "\033[3;4R");
+    assert(t->r == 6);
+    check_reply(e, "\033[?6l\033[r", "");
+
+    // Reset keeps the reply function
+    vt_emu_reset(e);
+    check_reply(e, "\033[6n", "\033[1;1R");
+
+    vt_emu_set_reply(e, NULL, NULL);
+}
+
 int main() {
 
     const vt_coord_t w = 20;
@@ -690,6 +751,7 @@ int main() {
     test_margin(&e);
     test_private_sequences(&e);
     test_modes(&e);
+    test_replies(&e);
     test_repeat_character(&e);
     test_horizontal_tabs(&e);
     // test_stdin(&e);
