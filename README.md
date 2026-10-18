@@ -13,14 +13,16 @@ The tests are very simple and do not rely on a framework (I am so tired of tryin
 The code is not complete and subject to change, but I am happy to recieve pull requests... particularly if they have tests included.
 
 
-An example of setting up a terminal is shown below:
+## Using it
+
+Add the library to a Pico SDK project with `add_subdirectory` and link `pico_vtlib`. An example of setting up a terminal is shown below:
 
 ```C
-#include "vt/vt_emu.h"
-#include "vt/vt_pallet.h"
+#include "vt_emu.h"
+#include "vt_pallet.h"
 
-#define CHAR_ROWS 80
-#define CHAR_COLS 25
+#define CHAR_COLS 80
+#define CHAR_ROWS 25
 
 static hstx_dvi_pixel_t _pallet[256];
 static vt_cell_t _screen[CHAR_ROWS][CHAR_COLS];
@@ -36,6 +38,11 @@ static void vt_pallet_make_cb(
     _pallet[i] = hstx_dvi_pixel_rgb(r,g,b);
 }
 
+// Replies to the host, e.g. the answer to a cursor position request (optional)
+static void vt_reply_cb(void *ctx, const vt_char_t *s, uint32_t n) {
+    for (uint32_t i = 0; i < n; ++i) putchar(s[i]);
+}
+
 void hstx_dvi_vt_init() {
 
     // Setup the pallet
@@ -43,9 +50,99 @@ void hstx_dvi_vt_init() {
 
     // Setup the terminal emulator
     vt_emu_init(&vt_emu, (vt_cell_t*)_screen, CHAR_COLS, CHAR_ROWS);
+    vt_emu_set_reply(&vt_emu, vt_reply_cb, NULL);
 
     // Say hello
     vt_emu_put_str(&vt_emu, (vt_char_t*)"Pico virtual terminal v0.1\r\n");
 }
 ```
 
+Then pass everything received from the host to `vt_emu_put_ch()` (or `vt_emu_put_str()`).
+
+### Input
+
+* The emulator aims to behave like xterm.
+* Text is decoded as UTF-8. Bytes 0x80-0x9F are not treated as C1 controls (as xterm in UTF-8 mode).
+* **LF (`\n`) moves down a line but does not return to column 0**, as on a real terminal; the host's tty
+  normally sends `\r\n`. If your program writes directly to the emulator with just `\n`, either send
+  `\r\n` or turn on new line mode: `vt_term_mode_set(&vt_emu.term, VT_TERM_MODE_LNM, true)`.
+* Replies (device attributes, status and cursor position reports) are only sent if a reply function is set
+  with `vt_emu_set_reply()`.
+
+### Rendering
+
+The screen is a grid of `vt_cell_t` (`term.rp[row][col]`), each holding an 8 bit glyph and its attributes:
+
+* `vt_cell_get_char()` is the glyph, `vt_cell_fg_get()` / `vt_cell_bg_get()` are palette indexes (see
+  `vt_pallet_make_256_colours()`) and `vt_cell_flags_get()` is the `VT_CELL_FLAGS_xxx` (bold, underline,
+  reverse etc.).
+* The cursor is at `term.r`, `term.c`. Don't draw it when the host has hidden it:
+  `vt_term_mode_get(&vt_emu.term, VT_TERM_MODE_CURSOR)` is false.
+* 24 bit colours are mapped to the nearest of the 256 palette colours.
+
+#### Glyphs and fonts
+
+Unicode code points are mapped to the 8 bit glyph stored in each cell by a character map. The default,
+`vt_charmap_ascii`, suits a font with just printable ASCII (0x20-0x7E) and never produces anything else:
+line drawing uses the ncurses ASCII fallbacks (`+`, `-`, `|` ...), accented Latin-1 letters lose their
+accents and anything else is `?`.
+
+If your font has more glyphs (e.g. CP437 box drawing), provide your own map:
+
+```C
+static vt_char_t my_charmap(uint32_t cp) {
+    switch (cp) {
+        case 0x2500: return 0xC4; // ─
+        case 0x2502: return 0xB3; // │
+        case 0x250C: return 0xDA; // ┌
+        // ...
+        default: return vt_charmap_ascii(cp);
+    }
+}
+
+vt_emu_set_charmap(&vt_emu, my_charmap);
+```
+
+DEC special graphics (line drawing selected with `ESC ( 0`) is converted to the equivalent Unicode, so it
+goes through the same map. Wide characters (CJK, emoji) take two cells (the glyph then a space) and
+combining marks are dropped.
+
+### Modes
+
+Modes are set by the host with SM/RM (`ESC [ n h` / `ESC [ n l`) or directly with `vt_term_mode_set()`:
+
+| Mode | Sequence | Default | Effect |
+|---|---|---|---|
+| `VT_TERM_MODE_AUTOWRAP` | `?7` | on | Wrap at the right margin (DECAWM) |
+| `VT_TERM_MODE_ORIGIN` | `?6` | off | Cursor rows relative to the scroll region (DECOM) |
+| `VT_TERM_MODE_CURSOR` | `?25` | on | Cursor visible (DECTCEM), for the renderer |
+| `VT_TERM_MODE_INSERT` | `4` | off | Insert rather than overwrite characters (IRM) |
+| `VT_TERM_MODE_LNM` | `20` | off | LF, VT and FF also return to column 0 (LNM) |
+
+### Supported sequences
+
+| Kind | Supported |
+|---|---|
+| C0 | BS, HT, LF, VT, FF, CR, SO, SI |
+| ESC | `7` `8` save/restore cursor, `D` index, `E` next line, `H` set tab, `M` reverse index, `c` reset, `( 0` `( B` `) 0` `) B` character sets |
+| Cursor | CUU/CUD/CUF/CUB `A` `B` `C` `D`, CNL/CPL `E` `F`, CHA/HPA `G` `` ` ``, CUP/HVP `H` `f`, VPA `d`, `s` `u` save/restore |
+| Editing | ED `J`, EL `K`, ICH `@`, DCH `P`, ECH `X`, IL `L`, DL `M`, REP `b` |
+| Scrolling | DECSTBM `r`, SU `S`, SD `T` |
+| Tabs | CHT `I`, CBT `Z`, TBC `g` |
+| Attributes | SGR `m`: styles 0-9 and 22-29, colours 30-37/39, 40-47/49, 90-97, 100-107, `38;5;n`, `48;5;n`, `38;2;r;g;b`, `48;2;r;g;b` |
+| Modes | SM/RM `h` `l` (see above) |
+| Reports | DA `c`, DSR `5n` and `6n` |
+
+OSC strings (e.g. window titles) are consumed and ignored. Unsupported private sequences (`ESC [ ? ...`,
+`ESC [ > ...`) are ignored.
+
+## Tests
+
+The tests are plain C programs, one per module, built and run by a script:
+
+```sh
+cd src
+for t in *_test.sh; do bash "$t" || break; done
+```
+
+They are also worth running with `-fsanitize=address,undefined` added to the `cc` line.
