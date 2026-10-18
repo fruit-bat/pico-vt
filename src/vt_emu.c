@@ -94,6 +94,17 @@ static char* vt_emu_put_dec(
     return s;
 }
 
+// Append a 16 bit colour component (from 8 bits) as 4 hex digits, returning the new end
+static char* vt_emu_put_hex16(
+    char *s,
+    uint32_t v8
+) {
+    static const char hex[] = "0123456789abcdef";
+    const uint32_t v = v8 * 257; // 0xAB -> 0xABAB
+    for (int shift = 12; shift >= 0; shift -= 4) *s++ = hex[(v >> shift) & 0xF];
+    return s;
+}
+
 static void vt_emu_reply(
     vt_emu_t *e,
     const char *s
@@ -753,9 +764,37 @@ static void vt_emu_put_byte(
     case VT_A_XPALR:       // Linux reset pallet
         DEBUG("VT_A_XPALR\n");
         break;
-    case VT_A_OSC:         // General OSC string handling
-        DEBUG("VT_A_OSC\n");
+    case VT_A_OSC: {       // General OSC string handling
+        const uint32_t cmd = vt_emu_get_p0(p, 0);
+        DEBUG("VT_A_OSC %lu %s\n", (ul)cmd, (char*)p->osc_param);
+        if ((cmd == 10 || cmd == 11) && strcmp((const char*)p->osc_param, "?") == 0) {
+            // Query the default foreground (10) or background (11) colour.
+            // Reply as xterm: ESC ] 1x ; rgb:RRRR/GGGG/BBBB, with the query's terminator
+            uint32_t rgb[3];
+            vt_pallet_get_rgb(cmd == 10 ? VT_TERM_DEFAULT_FG : VT_TERM_DEFAULT_BG, &rgb[0], &rgb[1], &rgb[2]);
+            char r[40];
+            char *q = r;
+            *q++ = '\033';
+            *q++ = ']';
+            q = vt_emu_put_dec(q, cmd);
+            memcpy(q, ";rgb:", 5);
+            q += 5;
+            for (int i = 0; i < 3; ++i) {
+                if (i) *q++ = '/';
+                q = vt_emu_put_hex16(q, rgb[i]);
+            }
+            if (s->m == 0x07) {
+                *q++ = 0x07;   // BEL
+            }
+            else {
+                *q++ = '\033'; // ST
+                *q++ = '\\';
+            }
+            *q = 0;
+            vt_emu_reply(e, r);
+        }
         break;
+    }
     case VT_A_DEC_SP_ON: { // G0 is DEC special graphics (box drawing)
         DEBUG("VT_A_DEC_SP_ON\n");
         e->g_dec[0] = true;

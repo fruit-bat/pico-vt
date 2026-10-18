@@ -101,6 +101,7 @@ typedef enum {
     VT_G_OSC_D,
     VT_G_ESC_OB,
     VT_G_ESC_CB,
+    VT_G_OSC_ESC,
 } vt_g_t;
 
 const vt_state_t vt_states_ground[] = {
@@ -205,6 +206,8 @@ const vt_state_t vt_states_csi_f[] = {
 const vt_state_t vt_states_osc[] = {
     {'P',          VT_G_OSC_P1,       VT_F_NEXT_CH},  // Linux set pallet ESC ] P n r r g g b b
     {'R',          VT_A_XPALR,        VT_F_FINAL},    // Linux reset pallet ESC ] R
+    {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL},    // Empty OSC
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH},  // Empty OSC ended by ESC \ (ST)
     // TODO at least parse out the command - up to the first ;
     // The command can go into the numeric parameters
     {VT_M_CHAR,    VT_G_OSC_T,        VT_F_NONE},     // ESC ]
@@ -219,18 +222,25 @@ const vt_state_t vt_states_osc_p7[] = {{VT_M_CHAR, VT_A_XPALS,  VT_F_COL_OSC|VT_
 const vt_state_t vt_states_osc_t[] = {
     {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL}, // OSC terminator
     {VT_M_ST,      VT_A_OSC,          VT_F_FINAL}, // OSC terminator
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH}, // ESC \ terminator
     {VT_M_DIGIT,   VT_G_OSC_C,        VT_F_NXT_P|VT_F_COL_P|VT_F_NEXT_CH}, // ESC [0-9
 };
 const vt_state_t vt_states_osc_c[] = {
     {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL}, // OSC terminator
     {VT_M_ST,      VT_A_OSC,          VT_F_FINAL}, // OSC terminator
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH}, // ESC \ terminator
+    {VT_M_DIGIT,   VT_G_OSC_C,        VT_F_COL_P|VT_F_NEXT_CH}, // More of the command number
     {';',          VT_G_OSC_D,        VT_F_NEXT_CH},
     {VT_M_ANY,     VT_G_OSC_C,        VT_F_COL_OSC|VT_F_NEXT_CH} // Collect OSC character
 };
 const vt_state_t vt_states_osc_d[] = {
     {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL}, // OSC terminator
     {VT_M_ST,      VT_A_OSC,          VT_F_FINAL}, // OSC terminator
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH}, // ESC \ terminator
     {VT_M_ANY,     VT_G_OSC_D,        VT_F_COL_OSC|VT_F_NEXT_CH} // Collect OSC character  
+};
+const vt_state_t vt_states_osc_esc[] = {
+    {'\\',         VT_A_OSC,          VT_F_FINAL}, // ESC \ (ST) ends the OSC; anything else abandons it
 };
 const vt_state_t vt_states_esc_ob[] = { // ESC(
     {'0',          VT_A_DEC_SP_ON,    VT_F_FINAL}, // Turn on DEC special graphics (box drawing)
@@ -269,6 +279,7 @@ const vt_state_t* vt_state_grp[] = {
     STATE_PTR(vt_states_osc_d),
     STATE_PTR(vt_states_esc_ob),
     STATE_PTR(vt_states_esc_cb),
+    STATE_PTR(vt_states_osc_esc),
 };
 
 #define COUNT_ARR(X) ((sizeof (X))/(sizeof (X)[0]))
@@ -293,6 +304,7 @@ const uint8_t vt_state_grp_len[] = {
     COUNT_ARR(vt_states_osc_d),
     COUNT_ARR(vt_states_esc_ob),
     COUNT_ARR(vt_states_esc_cb),
+    COUNT_ARR(vt_states_osc_esc),
 };
 
 void vt_parser_reset(vt_parser_t *p) {

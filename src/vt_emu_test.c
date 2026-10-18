@@ -51,6 +51,7 @@ tio /tmp/myfifo
 #include <stdio.h>
 #include <assert.h>
 #include <string.h>
+#include "vt_pallet.h"
 
 #define BLANK_ROW "                    "
 
@@ -734,6 +735,20 @@ void test_replies(vt_emu_t* e) {
     assert(t->r == 6);
     check_reply(e, "\033[?6l\033[r", "");
 
+    // Default colour queries (OSC 10/11) are answered with the query's terminator
+    char q[64];
+    uint32_t r, g, b;
+    vt_pallet_get_rgb(VT_TERM_DEFAULT_FG, &r, &g, &b);
+    snprintf(q, sizeof(q), "\033]10;rgb:%04x/%04x/%04x\007", (unsigned)(r * 257), (unsigned)(g * 257), (unsigned)(b * 257));
+    check_reply(e, "\033]10;?\007", q);
+    vt_pallet_get_rgb(VT_TERM_DEFAULT_BG, &r, &g, &b);
+    snprintf(q, sizeof(q), "\033]11;rgb:%04x/%04x/%04x\033\\", (unsigned)(r * 257), (unsigned)(g * 257), (unsigned)(b * 257));
+    check_reply(e, "\033]11;?\033\\", q);
+    // Only queries are answered
+    check_reply(e, "\033]11;rgb:1234/5678/9abc\007", "");
+    check_reply(e, "\033]1;?\007", "");
+    check_reply(e, "\033]110;?\007", "");
+
     // Reset keeps the reply function
     vt_emu_reset(e);
     check_reply(e, "\033[6n", "\033[1;1R");
@@ -944,6 +959,11 @@ void test_utf8(vt_emu_t* e) {
     check_grid_row(t, 0, "??A                 ");
     assert(vt_cell_flags_get(vt_cell_get_attr(t->rp[0][2])) == VT_CELL_FLAGS_BOLD);
     vt_emu_put_str(e, (vt_char_t*)"\033[m");
+
+    // A title ended with ESC \ (ST) doesn't swallow what follows
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"\033]0;my title\033\\after");
+    check_grid_row(t, 0, "after               ");
 
     // UTF-8 within an OSC title is not displayed
     vt_emu_reset(e);

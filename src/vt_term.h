@@ -38,7 +38,7 @@ extern "C"
 #define VT_SCREEN_MAX_COLS 80
 #define VT_SCREEN_MAX_ROWS 60
 #define VT_TERM_DEFAULT_BG 0
-#define VT_TERM_DEFAULT_FG 1
+#define VT_TERM_DEFAULT_FG 7 // Light grey (as xterm)
 #define VT_TERM_DEFAULT_FLAGS VT_CELL_FLAGS_NORMAL
 
 // Terminal modes, held in vt_term_t.flags and set with vt_term_mode_set()

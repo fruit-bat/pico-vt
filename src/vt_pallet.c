@@ -28,68 +28,62 @@
 #include "vt_pallet.h"
 
 // https://en.wikipedia.org/wiki/ANSI_escape_code
+// colors 0 - 7  Standard colours
+// colors 8 - 15 Bright colours
+static const uint8_t vt_pallet_p16[16][3] = {
+    {0,  0,  0  }, // Black
+    {170,0,  0  }, // Red
+    {0,  170,0  }, // Green
+    {170,85, 0  }, // Yellow
+    {0,  0,  170}, // Blue
+    {170,0,  170}, // Magenta
+    {0,  170,170}, // Cyan
+    {170,170,170}, // White
+    {85, 85, 85 }, // Bright Black
+    {255,85, 85 }, // Bright Red
+    {85, 255,85 }, // Bright Green
+    {255,255,85 }, // Bright Yellow
+    {85, 85, 255}, // Bright Blue
+    {255,85, 255}, // Bright Magenta
+    {85, 255,255}, // Bright Cyan
+    {255,255,255}, // Bright White
+};
+
+void vt_pallet_get_rgb(
+    vt_cell_colour_t i,
+    uint32_t *r,
+    uint32_t *g,
+    uint32_t *b
+) {
+    if (i < 16) {
+        *r = vt_pallet_p16[i][0];
+        *g = vt_pallet_p16[i][1];
+        *b = vt_pallet_p16[i][2];
+    }
+    else if (i < 232) {
+        // colors 16-231 are a 6x6x6 color cube
+        const uint32_t c = i - 16;
+        const uint32_t ri = c / 36;
+        const uint32_t gi = (c / 6) % 6;
+        const uint32_t bi = c % 6;
+        *r = ri ? ri * 40 + 55 : 0;
+        *g = gi ? gi * 40 + 55 : 0;
+        *b = bi ? bi * 40 + 55 : 0;
+    }
+    else {
+        // colors 232-255 are a grayscale ramp, intentionally leaving out black and white
+        *r = *g = *b = (i - 232) * 10 + 8;
+    }
+}
+
 void vt_pallet_make_256_colours(
     void *d,
     vt_pallet_make_cb_t vt_pallet_make_cb
 ) {
-    // colors 0 - 7  Standard colours
-    // colors 8 - 15 Bright colours
-    static uint8_t p16[16][3] = {
-        {0,  0,  0  }, // Black
-        {170,0,  0  }, // Red
-        {0,  170,0  }, // Green
-        {170,85, 0  }, // Yellow
-        {0,  0,  170}, // Blue
-        {170,0,  170}, // Magenta
-        {0,  170,170}, // Cyan
-        {170,170,170}, // White
-        {85, 85, 85 }, // Bright Black
-        {255,85, 85 }, // Bright Red
-        {85, 255,85 }, // Bright Green
-        {255,255,85 }, // Bright Yellow
-        {85, 85, 255}, // Bright Blue
-        {255,85, 255}, // Bright Magenta
-        {85, 255,255}, // Bright Cyan
-        {255,255,255}, // Bright White
-    };
-
-    for(uint8_t i = 0; i < 16; ++i) {
-        vt_pallet_make_cb(
-            d, 
-            (vt_cell_colour_t)i, 
-            p16[i][0], 
-            p16[i][1], 
-            p16[i][2]
-        );
-    }
- 
-    // colors 16-231 are a 6x6x6 color cube
-    for (uint8_t r = 0; r < 6; ++r) {
-        for (uint8_t g = 0; g < 6; ++g) {
-            for (uint8_t b = 0; b < 6; ++b) {
-                uint32_t i = 16 + (r * 36) + (g * 6) + b;
-                vt_pallet_make_cb(
-                    d, 
-                    (vt_cell_colour_t)i, 
-                    r ? r * 40 + 55 : 0, 
-                    g ? g * 40 + 55 : 0, 
-                    b ? b * 40 + 55 : 0
-                );
-            }
-        }
-    }
-
-    // colors 232-255 are a grayscale ramp, intentionally leaving out black and white
-    for(uint8_t j = 0; j <  24; ++j) {
-        uint32_t i = j + 232;
-        uint8_t l = j * 10 + 8;
-        vt_pallet_make_cb(
-            d, 
-            (vt_cell_colour_t)i, 
-            l, 
-            l, 
-            l
-        );
+    for (uint32_t i = 0; i < 256; ++i) {
+        uint32_t r, g, b;
+        vt_pallet_get_rgb((vt_cell_colour_t)i, &r, &g, &b);
+        vt_pallet_make_cb(d, (vt_cell_colour_t)i, r, g, b);
     }
 }
 

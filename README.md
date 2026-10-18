@@ -148,9 +148,9 @@ The alternate screen modes `?47`, `?1047`, `?1048` and `?1049` are also supporte
 | Tabs | CHT `I`, CBT `Z`, TBC `g` |
 | Attributes | SGR `m`: styles 0-9 and 22-29, colours 30-37/39, 40-47/49, 90-97, 100-107, `38;5;n`, `48;5;n`, `38;2;r;g;b`, `48;2;r;g;b` |
 | Modes | SM/RM `h` `l`: `4`, `20`, `?6`, `?7`, `?25`, `?47`, `?1047`, `?1048`, `?1049` |
-| Reports | DA `c`, DSR `5n` and `6n` |
+| Reports | DA `c`, DSR `5n` and `6n`, OSC `10;?` and `11;?` (default foreground and background colours) |
 
-OSC strings (e.g. window titles) are consumed and ignored. Unsupported private sequences (`ESC [ ? ...`,
+Other OSC strings (e.g. window titles) are consumed and ignored; they can end with BEL, `ESC \` or ST. Unsupported private sequences (`ESC [ ? ...`,
 `ESC [ > ...`) are ignored. As xterm, C0 controls within a sequence are executed without interrupting it,
 CAN and SUB abandon it and ESC starts a new one.
 
