@@ -120,6 +120,8 @@ typedef enum {
     // https://en.wikipedia.org/wiki/DEC_Special_Graphics
     VT_A_DEC_SP_ON,   // DEC special graphics on (box drawing characters)
     VT_A_DEC_SP_OFF,  // DEC special graphics off (lower case letters)
+    VT_A_G1_DEC_SP_ON,  // As VT_A_DEC_SP_ON for G1 (ESC ) 0)
+    VT_A_G1_DEC_SP_OFF, // As VT_A_DEC_SP_OFF for G1 (ESC ) B)
 
     VT_A_XPALS,       // Linux set pallet 
     VT_A_XPALR,       // Linux reset pallet
@@ -163,6 +165,9 @@ typedef struct {
 void vt_parser_init(vt_parser_t *p);
 
 void vt_parser_reset(vt_parser_t *p);
+
+// True between sequences (no escape sequence is part way through)
+bool vt_parser_in_ground(const vt_parser_t *p);
 
 const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch);
 

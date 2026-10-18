@@ -881,6 +881,101 @@ void test_reset_to_initial_state(vt_emu_t* e) {
     assert(t->c == 8);
 }
 
+// A CP437 style map: box drawing lines get their own glyphs
+static vt_char_t test_charmap(uint32_t cp) {
+    if (cp == 0x2500) return 0xC4;
+    if (cp == 0x2502) return 0xB3;
+    return vt_charmap_ascii(cp);
+}
+
+void test_utf8(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test UTF-8\n");
+    // Accented letters, and Cyrillic whose bytes include C1 values (not controls)
+    vt_emu_put_str(e, (vt_char_t*)"caf\xC3\xA9 \xD1\x8D\xD0\x9B!");
+    print_grid(t);
+    check_grid_row(t, 0, "cafe ??" "!            ");
+    assert(t->r == 0 && t->c == 8);
+
+    // Raw C1 bytes are invalid UTF-8, not CSI or other controls
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"a\x9B" "2Jb\x84" "c");
+    check_grid_row(t, 0, "a?2Jb?c             ");
+
+    // Combining marks take no space
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"e\xCC\x81x");
+    check_grid_row(t, 0, "ex                  ");
+
+    // Wide characters take two cells
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"a\xE4\xB8\xAD" "b");
+    check_grid_row(t, 0, "a? b                ");
+    assert(t->c == 4);
+    // ...and wrap rather than split at the end of a line
+    vt_emu_put_str(e, (vt_char_t*)"\033[1;20H\xE4\xB8\xAD" "c");
+    check_grid_row(t, 0, "a? b                ");
+    check_grid_row(t, 1, "? c                 ");
+    // ...unless auto wrap is off
+    vt_emu_put_str(e, (vt_char_t*)"\033[?7l\033[3;20H\xE4\xB8\xAD\033[?7h");
+    check_grid_row(t, 2, "                   ?");
+    assert(t->r == 2 && t->c == t->w - 1);
+
+    // Invalid and interrupted sequences show a replacement and the interruption still works
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"\xFF\xE2\033[1mA");
+    check_grid_row(t, 0, "??A                 ");
+    assert(vt_cell_flags_get(vt_cell_get_attr(t->rp[0][2])) == VT_CELL_FLAGS_BOLD);
+    vt_emu_put_str(e, (vt_char_t*)"\033[m");
+
+    // UTF-8 within an OSC title is not displayed
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"\033]0;t\xC3\xAFtle\x07X");
+    check_grid_row(t, 0, "X                   ");
+
+    // A custom character map
+    vt_emu_reset(e);
+    vt_emu_set_charmap(e, test_charmap);
+    vt_emu_put_str(e, (vt_char_t*)"\xE2\x94\x80\xE2\x94\x82\xE2\x94\x8C");
+    assert(vt_cell_get_char(t->rp[0][0]) == 0xC4);
+    assert(vt_cell_get_char(t->rp[0][1]) == 0xB3);
+    assert(vt_cell_get_char(t->rp[0][2]) == '+');
+    // Reset keeps it
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"\033(0q\033(B");
+    assert(vt_cell_get_char(t->rp[0][0]) == 0xC4);
+    vt_emu_set_charmap(e, vt_charmap_ascii);
+}
+
+void test_dec_graphics(vt_emu_t* e) {
+    vt_term_t* const t = &e->term;
+    vt_emu_reset(e);
+
+    printf("Test DEC special graphics\n");
+    // G0 designated as line drawing; characters outside 0x5F-0x7E are unchanged
+    vt_emu_put_str(e, (vt_char_t*)"\033(0lqkAx\033(Blqk");
+    print_grid(t);
+    check_grid_row(t, 0, "+-+A|lqk            ");
+
+    // G1 with shift out/in
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"\033)0q\x0Eq\x0Fq");
+    check_grid_row(t, 0, "q-q                 ");
+
+    // The character sets are saved and restored with the cursor (which returns to column 0)
+    vt_emu_reset(e);
+    vt_emu_put_str(e, (vt_char_t*)"\033(0\0337\033(Bq");
+    check_grid_row(t, 0, "q                   ");
+    vt_emu_put_str(e, (vt_char_t*)"\0338q");
+    check_grid_row(t, 0, "-                   ");
+
+    // Reset returns to ASCII
+    vt_emu_put_str(e, (vt_char_t*)"\033(0\033cq");
+    check_grid_row(t, 0, "q                   ");
+}
+
 int main() {
 
     const vt_coord_t w = 20;
@@ -903,6 +998,8 @@ int main() {
     test_sgr_colours_extended(&e);
     test_index_next_line(&e);
     test_reset_to_initial_state(&e);
+    test_utf8(&e);
+    test_dec_graphics(&e);
     test_repeat_character(&e);
     test_horizontal_tabs(&e);
     // test_stdin(&e);

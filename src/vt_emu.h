@@ -30,6 +30,8 @@
 #include "vt_parser.h"
 #include "vt_term.h"
 #include "vt_tabs.h"
+#include "vt_utf8.h"
+#include "vt_charmap.h"
 
 #ifdef __cplusplus
 extern "C"
@@ -49,6 +51,12 @@ typedef struct {
     vt_tabs_t tabs;
     vt_emu_reply_t reply; // NULL if replies are not wanted
     void* reply_ctx;
+    vt_utf8_t utf8;       // Decoder for printable text
+    vt_charmap_t charmap; // Code point to cell glyph
+    bool g_dec[2];        // G0/G1 use DEC special graphics (line drawing)
+    uint8_t gl;           // The set in use: 0 (G0, SI) or 1 (G1, SO)
+    bool s_g_dec[2];      // Saved with the cursor
+    uint8_t s_gl;
 } vt_emu_t;
 
 void vt_emu_init(
@@ -70,6 +78,13 @@ void vt_emu_put_str(
 
 void vt_emu_reset(
     vt_emu_t *e
+);
+
+// Set how code points map to the 8 bit glyphs in the cells, to match the
+// display font. The default is vt_charmap_ascii. Reset does not change this.
+void vt_emu_set_charmap(
+    vt_emu_t *e,
+    vt_charmap_t charmap
 );
 
 // Set where replies to the host go (reset does not change this)

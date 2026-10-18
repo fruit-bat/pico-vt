@@ -9,6 +9,8 @@
 #define DEBUG(...) 
 typedef unsigned long ul;
 
+static void vt_emu_reset_text(vt_emu_t *e);
+
 void vt_emu_init(
     vt_emu_t* e,     // Emulator
     vt_cell_t* grid, // Cell grid for the display
@@ -30,6 +32,38 @@ void vt_emu_init(
         8
     );
     vt_emu_set_reply(e, NULL, NULL);
+    vt_emu_set_charmap(e, vt_charmap_ascii);
+    vt_emu_reset_text(e);
+}
+
+void vt_emu_set_charmap(
+    vt_emu_t *e,
+    vt_charmap_t charmap
+) {
+    e->charmap = charmap;
+}
+
+// Write a non-ASCII code point, taking its width into account
+static void vt_emu_put_cp(
+    vt_emu_t *e,
+    uint32_t cp
+) {
+    vt_term_t* const t = &e->term;
+    const uint32_t w = vt_charmap_width(cp);
+    if (w == 0) return; // Combining marks and controls are not shown
+    const vt_char_t g = e->charmap(cp);
+    if (w == 2 && !t->wrap && t->c == t->w - 1) {
+        // A wide character doesn't fit in the last column
+        if (vt_term_mode_get(t, VT_TERM_MODE_AUTOWRAP)) {
+            vt_term_putch(t, ' '); // Leave it blank and wrap
+        }
+        else {
+            vt_term_putch(t, g);   // No wrap: squeeze it into the last column
+            return;
+        }
+    }
+    vt_term_putch(t, g);
+    if (w == 2) vt_term_putch(t, ' '); // The second cell of a wide character
 }
 
 void vt_emu_set_reply(
@@ -60,9 +94,21 @@ static void vt_emu_reply(
     if (e->reply) e->reply(e->reply_ctx, (const vt_char_t*)s, (uint32_t)strlen(s));
 }
 
+// Text state that is not part of the terminal: the UTF-8 decoder and character sets
+static void vt_emu_reset_text(
+    vt_emu_t *e
+) {
+    vt_utf8_init(&e->utf8);
+    e->g_dec[0] = e->g_dec[1] = false;
+    e->gl = 0;
+    e->s_g_dec[0] = e->s_g_dec[1] = false;
+    e->s_gl = 0;
+}
+
 void vt_emu_reset(
     vt_emu_t *e
 ) {
+    vt_emu_reset_text(e);
     vt_parser_reset(
         &e->parser
     );
@@ -301,7 +347,8 @@ static void vt_emu_set_modes(
     }
 }
 
-void vt_emu_put_ch(
+// Handle an ASCII byte (or a raw byte within an escape sequence)
+static void vt_emu_put_byte(
     vt_emu_t *e, 
     vt_char_t ch
 ) {
@@ -322,7 +369,12 @@ void vt_emu_put_ch(
     switch(a) {
     case VT_A_CHAR:        // A character is ready
         DEBUG("VT_A_CHAR (%d)\n", p->ch);
-        vt_term_putch(t, p->ch);
+        if (e->g_dec[e->gl] && p->ch >= 0x5F && p->ch <= 0x7E) {
+            vt_emu_put_cp(e, vt_charmap_dec_graphics(p->ch));
+        }
+        else {
+            vt_term_putch(t, p->ch);
+        }
         break;
     case VT_A_C0_NULL:     // C0 control codes
         DEBUG("VT_A_C0_NULL\n");
@@ -375,11 +427,13 @@ void vt_emu_put_ch(
         DEBUG("VT_A_C0_CR\n");
         vt_term_cr(t);
         break;
-    case VT_A_C0_SO:       // Shift Out  
+    case VT_A_C0_SO:       // Shift Out: use G1
         DEBUG("VT_A_C0_SO\n");
+        e->gl = 1;
         break;
-    case VT_A_C0_SI:       // Shift In
+    case VT_A_C0_SI:       // Shift In: use G0
         DEBUG("VT_A_C0_SI\n");
+        e->gl = 0;
         break;
     case VT_A_C0_DLE:      // Data Link Escape
         DEBUG("VT_A_C0_DLE\n");
@@ -452,10 +506,16 @@ void vt_emu_put_ch(
     case VT_A_SAVE_CUR:    // VT100 Save Cursor Position (ESC 7)
         DEBUG("VT_A_SAVE_CUR\n");
         vt_term_save_cursor(t);
+        e->s_g_dec[0] = e->g_dec[0];
+        e->s_g_dec[1] = e->g_dec[1];
+        e->s_gl = e->gl;
         break;
     case VT_A_RESTORE_CUR: // VT100 Restore Cursor Position (ESC 8)
         DEBUG("VT_A_RESTORE_CUR\n");
         vt_term_restore_cursor(t);
+        e->g_dec[0] = e->s_g_dec[0];
+        e->g_dec[1] = e->s_g_dec[1];
+        e->gl = e->s_gl;
         break;
     case VT_A_CUU: {        // CUU - Cursor Up
         const uint32_t n = vt_emu_get_p1(p, 0);
@@ -630,12 +690,24 @@ void vt_emu_put_ch(
     case VT_A_OSC:         // General OSC string handling
         DEBUG("VT_A_OSC\n");
         break;
-    case VT_A_DEC_SP_ON: { // Turn on DEC special graphics (box drawing)
+    case VT_A_DEC_SP_ON: { // G0 is DEC special graphics (box drawing)
         DEBUG("VT_A_DEC_SP_ON\n");
+        e->g_dec[0] = true;
         break;
     }
-    case VT_A_DEC_SP_OFF: { // Turn off DEC special graphics (box drawing)
+    case VT_A_DEC_SP_OFF: { // G0 is ASCII
         DEBUG("VT_A_DEC_SP_OFF\n");
+        e->g_dec[0] = false;
+        break;
+    }
+    case VT_A_G1_DEC_SP_ON: { // G1 is DEC special graphics
+        DEBUG("VT_A_G1_DEC_SP_ON\n");
+        e->g_dec[1] = true;
+        break;
+    }
+    case VT_A_G1_DEC_SP_OFF: { // G1 is ASCII
+        DEBUG("VT_A_G1_DEC_SP_OFF\n");
+        e->g_dec[1] = false;
         break;
     }
     case VT_A_NONE:         // Do nothing!
@@ -652,4 +724,26 @@ void vt_emu_put_str(
     vt_char_t* s
 ) {
     while(*s) vt_emu_put_ch(e, *s++);
+}
+
+void vt_emu_put_ch(
+    vt_emu_t *e, 
+    vt_char_t ch
+) {
+    // Bytes within an escape sequence (e.g. an OSC title) go straight to the parser
+    if (!vt_utf8_busy(&e->utf8) && !vt_parser_in_ground(&e->parser)) {
+        vt_emu_put_byte(e, ch);
+        return;
+    }
+    // Otherwise decode UTF-8. Raw C1 bytes (0x80-0x9F) are not controls (as xterm in UTF-8 mode).
+    uint32_t cps[2];
+    const uint32_t n = vt_utf8_decode(&e->utf8, ch, cps);
+    for (uint32_t i = 0; i < n; ++i) {
+        if (cps[i] < 0x80) {
+            vt_emu_put_byte(e, (vt_char_t)cps[i]);
+        }
+        else {
+            vt_emu_put_cp(e, cps[i]);
+        }
+    }
 }

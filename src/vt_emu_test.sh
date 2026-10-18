@@ -8,4 +8,6 @@
  vt_emu_test.c \
  vt_tabs.c \
  vt_pallet.c \
+ vt_utf8.c \
+ vt_charmap.c \
  && ./a.out 
