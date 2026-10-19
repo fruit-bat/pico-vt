@@ -47,6 +47,23 @@ void vt_pallet_make_256_colours(
     vt_pallet_make_cb_t cb
 );
 
+// The red, green and blue (0-255) of colour i in the 256 colour palette
+void vt_pallet_get_rgb(
+    vt_cell_colour_t i,
+    uint32_t *r,
+    uint32_t *g,
+    uint32_t *b
+);
+
+// The nearest colour to r, g, b (0-255 each) in the 6x6x6 cube or grey ramp
+// of the 256 colour palette (16-255, as xterm). The first 16 colours are not
+// used as they are often customised.
+vt_cell_colour_t vt_pallet_rgb_to_256(
+    uint32_t r,
+    uint32_t g,
+    uint32_t b
+);
+
 #ifdef __cplusplus
 }
 #endif 

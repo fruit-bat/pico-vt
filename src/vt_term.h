@@ -26,6 +26,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 #include <stdint.h>
+#include <stdbool.h>
 #include "vt_types.h"
 #include "vt_cell.h"
 
@@ -34,43 +35,42 @@ extern "C"
 {
 #endif
 
-#define VT_SCREEN_MAX_COLS 80
-#define VT_SCREEN_MAX_ROWS 60
 #define VT_TERM_DEFAULT_BG 0
-#define VT_TERM_DEFAULT_FG 1
+#define VT_TERM_DEFAULT_FG 7 // Light grey (as xterm)
 #define VT_TERM_DEFAULT_FLAGS VT_CELL_FLAGS_NORMAL
 
-// VT100-derived terminals have a wrap behavior where the cursor "sticks"
-// at the end of a line instead of immediately wrapping.  This allows you
-// to use the last column without getting extra blank lines or
-// unintentionally scrolling the screen.  The logic we implement for it
-// is not exactly like that of a real VT100, but it seems to be
-// sufficient for things to work as expected in the use cases and with
-// the terminfo files I've tested with.  Specifically, I call the case
-// where the cursor has advanced exactly one position past the rightmost
-// column "hanging".  A rough description of the current algorithm is
-// that there are two cases which each have two sub-cases:
-// 1. You're hanging onto the next line below.  That is, you're not at
-//    the bottom of the screen/scrolling region.
-//    1a. If you receive a newline, hanging mode is canceled and nothing
-//        else happens.  In particular, you do *not* advanced to the next
-//        line.  You're already *at* the start of the "next" line.
-//    2b. If you receive a printable character, just cancel hanging mode.
-// 2. You're hanging past the bottom of the screen/scrolling region.
-//    2a. If you receive a newline or printable character, scroll the
-//        screen up one line and cancel hanging.
-//    2b. If you receive a cursor reposition or whatever, cancel hanging.
-// Below, hang is 0 if not hanging, or 1 or 2 as described above.
-typedef enum {
-    VT_HANG_NONE   = 0,
-    VT_HANG_LINE   = 1,
-    VT_HANG_BOTTOM = 2
-} vt_term_hang_t;
+// Terminal modes, held in vt_term_t.flags and set with vt_term_mode_set()
+#define VT_TERM_MODE_AUTOWRAP (1u << 0) // DECAWM (?7) wrap at the right margin
+#define VT_TERM_MODE_ORIGIN   (1u << 1) // DECOM  (?6) cursor rows relative to the margins
+#define VT_TERM_MODE_INSERT   (1u << 2) // IRM    (4)  insert characters rather than overwrite
+#define VT_TERM_MODE_LNM      (1u << 3) // LNM    (20) LF, VT and FF also do a CR
+#define VT_TERM_MODE_CURSOR   (1u << 4) // DECTCEM (?25) cursor visible (for the renderer)
+#define VT_TERM_MODES_DEFAULT (VT_TERM_MODE_AUTOWRAP | VT_TERM_MODE_CURSOR)
 
-typedef struct 
+// VT100-derived terminals have a deferred wrap behavior: writing a
+// character in the last column leaves the cursor in that column and sets
+// a "wrap pending" flag instead of moving to the next line.  This allows
+// you to use the last column without getting extra blank lines or
+// unintentionally scrolling the screen.  As in xterm:
+// - The next printable character first does a CR + LF (scrolling the
+//   region if the cursor is on the bottom margin) and is then written.
+// - CR, LF, RI, cursor movement, erase, insert and delete clear the flag.
+//   Since the cursor never left the last column, they act on the row and
+//   column the character was written to.
+
+// Size and capacity: the grid is laid out for a capacity (cw x ch cells, cw
+// cells per row) and the terminal uses the top left w x h of it. Resizing
+// within the capacity moves no cells and allocates nothing. Every row pointer
+// up to the capacity is always valid, so a renderer on another core that reads
+// w, h and rp while a resize is under way may show one odd frame but never
+// reads outside the grid (it should clamp to the capacity it allocated).
+
+typedef struct
 {
     vt_coord_t w; // Terminal width in characters
     vt_coord_t h; // Terminal height in characters
+    vt_coord_t cw; // Capacity width (the grid's cells per row)
+    vt_coord_t ch; // Capacity height (the grid's rows)
     vt_coord_t mt; // Margin top row
     vt_coord_t mb; // Margin bottom row
     vt_coord_t r; // Cursor row
@@ -79,18 +79,38 @@ typedef struct
     vt_coord_t s_r; // Cursor row
     vt_coord_t s_c; // Cursor column    
     vt_cell_attr_t s_attr; // The current attributes
-    vt_term_hang_t hang; // Delayed scroll handling
-    uint32_t flags;
-    vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers
+    bool s_origin; // Saved origin mode
+    bool wrap; // Wrap pending (deferred wrap at the last column)
+    uint32_t flags; // Modes (VT_TERM_MODE_xxx)
+    vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers (of the screen in use), ch of them
+    vt_cell_t* alt_rp[VT_SCREEN_MAX_ROWS]; // Row pointers of the screen not in use
+    bool alt;        // An alternate screen has been provided
+    bool alt_active; // The alternate screen is in use
 
 } vt_term_t;
 
+// DECSTBM - set the scroll region and home the cursor (ignored if invalid)
 void vt_term_margin_set(
     vt_term_t* t, // The terminal
     vt_coord_t mt, // Margin top row
     vt_coord_t mb // Margin bottom row
 );
 
+// Set or reset one or more modes (VT_TERM_MODE_xxx)
+void vt_term_mode_set(
+    vt_term_t* t,  // The terminal
+    uint32_t mode, // The mode(s)
+    bool on        // Set or reset
+);
+
+static inline bool vt_term_mode_get(
+    const vt_term_t* t, // The terminal
+    uint32_t mode       // The mode
+) {
+    return (t->flags & mode) != 0;
+}
+
+// A terminal that fills its grid (w x h cells), so it can't grow
 void vt_term_init(
     vt_term_t* t, // The terminal
     vt_cell_t* grid, // Cell grid for the display
@@ -98,8 +118,47 @@ void vt_term_init(
     vt_coord_t h  // Terminal height in characters
 );
 
+// A terminal of w x h in a grid of cw x ch cells (cw per row), so it can be
+// resized up to cw x ch. The capacity is limited to VT_SCREEN_MAX_COLS x
+// VT_SCREEN_MAX_ROWS and the size to the capacity.
+void vt_term_init_cap(
+    vt_term_t* t,    // The terminal
+    vt_cell_t* grid, // Cell grid for the display, cw x ch
+    vt_coord_t cw,   // Capacity width in characters
+    vt_coord_t ch,   // Capacity height in characters
+    vt_coord_t w,    // Terminal width in characters
+    vt_coord_t h     // Terminal height in characters
+);
+
+// Change the size, within the capacity (and at least 1 x 1), as xterm:
+// - Text is not reflowed. Shrinking hides cells, growing shows blank ones.
+// - If the cursor would be below the new bottom, the active screen scrolls up
+//   to keep the cursor's line in view (lines leaving the top are lost).
+// - The scroll region is reset to the whole screen, the cursor (and saved
+//   cursor) are kept on the screen and a pending wrap is cancelled.
+void vt_term_resize(
+    vt_term_t* t, // The terminal
+    vt_coord_t w, // New width in characters
+    vt_coord_t h  // New height in characters
+);
+
+// Returns to the normal screen if the alternate screen is in use
 void vt_term_reset(
     vt_term_t* t  // The terminal
+);
+
+// Provide a grid (the same capacity as the main one) for the alternate screen,
+// or NULL for none. The grid is cleared.
+void vt_term_alt_init(
+    vt_term_t* t,   // The terminal
+    vt_cell_t* grid // Cell grid for the alternate screen
+);
+
+// Switch to the alternate (true) or normal (false) screen. Does nothing
+// without an alternate screen.
+void vt_term_alt_set(
+    vt_term_t* t, // The terminal
+    bool on       // Use the alternate screen
 );
 
 void vt_term_save_cursor(
@@ -210,6 +269,12 @@ void vt_term_insert_characters(
     uint32_t n   // number of characters
 );
 
+// IND - index: down a line, scrolling the region at the bottom margin.
+// Unlike vt_term_nl, never returns to column 0.
+void vt_term_index(
+    vt_term_t *t // The terminal
+);
+
 // ESC M - reverse index / reverse new line
 void vt_term_reverse_nl(
     vt_term_t *t // The terminal
@@ -243,6 +308,26 @@ void vt_term_repeat(
 void vt_term_delete_characters(
     vt_term_t *t, // The terminal
     uint32_t n    // The number of characters to delete (note: 0 means 0)
+);
+
+// ECH - erase characters from the cursor without moving the rest of the line
+void vt_term_erase_characters(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of characters to erase (note: 0 means 0)
+);
+
+// IL - insert blank lines at the cursor row, pushing lines below it down
+// within the scroll region. Does nothing outside the region.
+void vt_term_insert_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to insert (note: 0 means 0)
+);
+
+// DL - delete lines at the cursor row, pulling lines below it up within
+// the scroll region. Does nothing outside the region.
+void vt_term_delete_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to delete (note: 0 means 0)
 );
 
 void vt_term_clear_screen(

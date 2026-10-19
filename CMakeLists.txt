@@ -7,6 +7,8 @@ target_sources(pico_vtlib INTERFACE
 	${CMAKE_CURRENT_LIST_DIR}/src/vt_pallet.c
 	${CMAKE_CURRENT_LIST_DIR}/src/vt_emu.c
 	${CMAKE_CURRENT_LIST_DIR}/src/vt_cell.c
+	${CMAKE_CURRENT_LIST_DIR}/src/vt_utf8.c
+	${CMAKE_CURRENT_LIST_DIR}/src/vt_charmap.c
 )
 
 target_include_directories(pico_vtlib INTERFACE

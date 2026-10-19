@@ -53,6 +53,32 @@ void vt_term_margin_set(
     if (mt >= mb || mb >= t->h) return;
     t->mt = mt;
     t->mb = mb;
+    // DECSTBM homes the cursor (to the top margin in origin mode)
+    vt_term_cursor_set(t, 0, 0);
+}
+
+void vt_term_mode_set(
+    vt_term_t* t,  // The terminal
+    uint32_t mode, // The mode(s)
+    bool on        // Set or reset
+) {
+    if (on) t->flags |= mode;
+    else t->flags &= ~mode;
+    // Changing origin mode homes the cursor
+    if (mode & VT_TERM_MODE_ORIGIN) vt_term_cursor_set(t, 0, 0);
+    // Without auto wrap there is nothing to wrap
+    if (!(t->flags & VT_TERM_MODE_AUTOWRAP)) t->wrap = false;
+}
+
+// Erased cells take the current colours but no other attributes (as xterm)
+static vt_cell_t vt_term_blank(
+    vt_term_t *t // The terminal
+) {
+    vt_cell_attr_t a = vt_cell_enc_attr(
+        vt_cell_fg_get(t->attr),
+        vt_cell_bg_get(t->attr),
+        VT_CELL_FLAGS_NORMAL);
+    return vt_cell_combine(a, (vt_char_t)' ');
 }
 
 static void vt_term_clear_line(
@@ -61,7 +87,7 @@ static void vt_term_clear_line(
     vt_coord_t sc, // The start column
     vt_coord_t ec  // The end column
 ) {
-    vt_cell_t c = vt_cell_combine(t->attr, (vt_char_t)' ');
+    vt_cell_t c = vt_term_blank(t);
     vt_cell_t *rp = t->rp[ri];
     if (ec > t->w)
         ec = t->w;
@@ -97,39 +123,79 @@ void vt_term_putch(
     vt_term_t *t, // The terminal
     vt_char_t ch
 ) {
-    if (t->hang == VT_HANG_BOTTOM) {
-        vt_term_scroll_up(t, t->mt, 1);
+    if (t->wrap) {
+        // Deferred wrap: CR + LF before writing (LF clears the flag)
+        t->c = 0;
+        vt_term_nl(t);
     }
-    t->hang = VT_HANG_NONE;
+
+    if (t->flags & VT_TERM_MODE_INSERT) {
+        // Make room, losing the character at the end of the line
+        vt_term_insert_characters(t, 1);
+    }
 
     t->rp[t->r][t->c] = vt_cell_combine(t->attr, ch);
 
     if (t->c < t->w - 1) {
         t->c++;
     }
-    else {
-        t->c = 0;
-        if (t->r == t->mb) {
-            // At the bottom margin, scroll the region on the next character
-            t->hang = VT_HANG_BOTTOM;
-        }
-        else if (t->r < t->h - 1) {
-            t->hang = VT_HANG_LINE;
-            t->r++;
-        }
-        // Else on the last row below the scroll region: no scroll, wrap to column 0
+    else if (t->flags & VT_TERM_MODE_AUTOWRAP) {
+        // Stay in the last column until the next character arrives
+        t->wrap = true;
     }
+    // Else without auto wrap, further characters overwrite the last column
 }
 
+
+// A space with the default attributes
+static vt_cell_t vt_term_default_blank(void) {
+    return vt_cell_combine(
+        vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS),
+        (vt_char_t)' ');
+}
+
+void vt_term_alt_set(
+    vt_term_t* t, // The terminal
+    bool on       // Use the alternate screen
+) {
+    if (!t->alt || t->alt_active == on) return;
+    // Swap the row pointers so rp is always the screen in use (all of the
+    // capacity, as rows past the bottom may come back into view on a resize)
+    for (vt_coord_t r = 0; r < t->ch; ++r) {
+        vt_cell_t* const tmp = t->rp[r];
+        t->rp[r] = t->alt_rp[r];
+        t->alt_rp[r] = tmp;
+    }
+    t->alt_active = on;
+    t->wrap = false;
+}
+
+void vt_term_alt_init(
+    vt_term_t* t,   // The terminal
+    vt_cell_t* grid // Cell grid for the alternate screen
+) {
+    vt_term_alt_set(t, false);
+    t->alt = grid != NULL;
+    if (!grid) return;
+    const vt_cell_t blank = vt_term_default_blank();
+    for (vt_coord_t r = 0; r < t->ch; ++r) {
+        t->alt_rp[r] = grid;
+        for (vt_coord_t c = 0; c < t->cw; ++c) grid[c] = blank;
+        grid += t->cw;
+    }
+}
 
 void vt_term_reset(
     vt_term_t* t  // The terminal
 ) {
-    // Clear down any flags
-    t->flags = 0;
+    // Back to the normal screen
+    vt_term_alt_set(t, false);
 
-    // Clear the delayed scroll
-    t->hang = VT_HANG_NONE;
+    // Default modes
+    t->flags = VT_TERM_MODES_DEFAULT;
+
+    // Clear the deferred wrap
+    t->wrap = false;
 
     // Cursor top left
     t->c = 0; // Cursor column
@@ -155,14 +221,19 @@ void vt_term_save_cursor(
     t->s_r = t->r;
     t->s_c = t->c;
     t->s_attr = t->attr;
+    t->s_origin = vt_term_mode_get(t, VT_TERM_MODE_ORIGIN);
 }
 
 void vt_term_restore_cursor(
     vt_term_t* t  // The terminal
 ) {
+    t->wrap = false;
     t->r = t->s_r;
     t->c = t->s_c;
     t->attr = t->s_attr;
+    // Restore origin mode without homing the cursor
+    if (t->s_origin) t->flags |= VT_TERM_MODE_ORIGIN;
+    else t->flags &= ~VT_TERM_MODE_ORIGIN;
 }
 
 void vt_term_init(
@@ -171,19 +242,92 @@ void vt_term_init(
     vt_coord_t w,    // Terminal width in characters
     vt_coord_t h     // Terminal height in characters
 ) {
-    // Set the terminal size
-    t->w = w; // Terminal width
-    t->h = h; // Terminal height
+    vt_term_init_cap(t, grid, w, h, w, h);
+}
 
-    // TODO perhaps these should be passed in?
-    // Initialize the row pointers
-    for (vt_coord_t r = 0; r < h; ++r)
+void vt_term_init_cap(
+    vt_term_t *t,    // The terminal
+    vt_cell_t *grid, // Cell grid for the display, cw x ch
+    vt_coord_t cw,   // Capacity width in characters
+    vt_coord_t ch,   // Capacity height in characters
+    vt_coord_t w,    // Terminal width in characters
+    vt_coord_t h     // Terminal height in characters
+) {
+    // Set the capacity and the terminal size within it
+    t->cw = MIN(cw, VT_SCREEN_MAX_COLS);
+    t->ch = MIN(ch, VT_SCREEN_MAX_ROWS);
+    t->w = MAX(MIN(w, t->cw), 1); // Terminal width
+    t->h = MAX(MIN(h, t->ch), 1); // Terminal height
+
+    // No alternate screen until one is provided
+    t->alt = false;
+    t->alt_active = false;
+
+    // Initialize the row pointers, for the whole capacity, blanking the
+    // parts out of view too so a resize can't show junk
+    const vt_cell_t blank = vt_term_default_blank();
+    for (vt_coord_t r = 0; r < t->ch; ++r)
     {
         t->rp[r] = grid;
-        grid += w;
+        for (vt_coord_t c = 0; c < t->cw; ++c) grid[c] = blank;
+        grid += t->cw;
     }
 
     vt_term_reset(t);
+}
+
+// Blank the cells of one screen that a resize from ow x oh to w x h brings into view
+static void vt_term_blank_exposed(
+    vt_cell_t **rp, // The screen's row pointers
+    vt_coord_t ow,  // Old width
+    vt_coord_t oh,  // Old height
+    vt_coord_t w,   // New width
+    vt_coord_t h    // New height
+) {
+    const vt_cell_t blank = vt_term_default_blank();
+    for (vt_coord_t r = 0; r < h; ++r) {
+        for (vt_coord_t c = r < oh ? ow : 0; c < w; ++c) rp[r][c] = blank;
+    }
+}
+
+void vt_term_resize(
+    vt_term_t *t, // The terminal
+    vt_coord_t w, // New width in characters
+    vt_coord_t h  // New height in characters
+) {
+    w = MAX(MIN(w, t->cw), 1);
+    h = MAX(MIN(h, t->ch), 1);
+    const vt_coord_t ow = t->w;
+    const vt_coord_t oh = t->h;
+
+    // Keep the cursor's line in view by scrolling the screen in use up. The
+    // rows scrolled off the top go below the bottom, out of view.
+    if (t->r >= h) {
+        const vt_coord_t k = t->r - h + 1;
+        vt_cell_t *tmp[VT_SCREEN_MAX_ROWS];
+        for (vt_coord_t i = 0; i < k; ++i) tmp[i] = t->rp[i];
+        for (vt_coord_t i = k; i < oh; ++i) t->rp[i - k] = t->rp[i];
+        for (vt_coord_t i = 0; i < k; ++i) t->rp[oh - k + i] = tmp[i];
+        t->r -= k;
+    }
+
+    // Blank what comes into view before it is shown
+    vt_term_blank_exposed(t->rp, ow, oh, w, h);
+    if (t->alt) vt_term_blank_exposed(t->alt_rp, ow, oh, w, h);
+
+    t->w = w;
+    t->h = h;
+
+    // The whole screen scrolls
+    t->mt = 0;
+    t->mb = h - 1;
+
+    // Keep the cursors on the screen
+    t->wrap = false;
+    t->r = MIN(t->r, h - 1);
+    t->c = MIN(t->c, w - 1);
+    t->s_r = MIN(t->s_r, h - 1);
+    t->s_c = MIN(t->s_c, w - 1);
 }
 
 void vt_term_cursor_set(
@@ -191,14 +335,15 @@ void vt_term_cursor_set(
     vt_coord_t r,
     vt_coord_t c
 ) {
-    t->r = MIN(r, t->h - 1);
-    t->c = MIN(c, t->w - 1);
+    vt_term_cursor_set_row(t, r);
+    vt_term_cursor_set_col(t, c);
 }
 
 void vt_term_cursor_set_col(
     vt_term_t *t,
     vt_coord_t c
 ) {
+    t->wrap = false;
     t->c = MIN(c, t->w - 1);
 }
 
@@ -206,7 +351,15 @@ void vt_term_cursor_set_row(
     vt_term_t *t,
     vt_coord_t r
 ) {
-    t->r = MIN(r, t->h - 1);
+    t->wrap = false;
+    if (t->flags & VT_TERM_MODE_ORIGIN) {
+        // Relative to the top margin and kept within the margins
+        uint32_t rr = (uint32_t)r + t->mt;
+        t->r = rr > t->mb ? t->mb : rr;
+    }
+    else {
+        t->r = MIN(r, t->h - 1);
+    }
 }
 
 void vt_term_scroll_up(
@@ -215,8 +368,8 @@ void vt_term_scroll_up(
     vt_coord_t n   // Number of rows to scroll
 )
 {
-    // Don't scroll the lower margin
-    if (rs > t->mb)
+    // Don't scroll the lower margin, and nothing to do for 0 rows
+    if (rs > t->mb || n == 0)
         return;
     // Don't scroll in the bottom margin
     vt_coord_t h = t->mb - rs + 1;
@@ -257,8 +410,8 @@ void vt_term_scroll_down(
     vt_coord_t n   // Number of rows to scroll
 )
 {
-    // Don't scroll the lower margin
-    if (rs > t->mb)
+    // Don't scroll the lower margin, and nothing to do for 0 rows
+    if (rs > t->mb || n == 0)
         return;
     // Don't scroll in the bottom margin
     vt_coord_t h = t->mb - rs + 1;
@@ -303,6 +456,7 @@ void vt_term_erase_in_display(
     uint32_t p0   // Parameter to specify the erase mode (0, 1, 2)
 )
 {
+    t->wrap = false;
     // Default range: clear the entire screen
     vt_coord_t b = 0;    // Start row (inclusive)
     vt_coord_t e = t->h; // End row (exclusive)
@@ -341,7 +495,8 @@ void vt_term_insert_characters(
     uint32_t n    // The number of characters to insert (note: 0 means 0)
 )
 {
-    if (n > t->w - t->c)
+    t->wrap = false;
+    if (n > (uint32_t)(t->w - t->c))
         n = t->w - t->c;
     if (n == 0)
         return;
@@ -359,7 +514,8 @@ void vt_term_delete_characters(
     uint32_t n    // The number of characters to delete (note: 0 means 0)
 )
 {
-    if (n > t->w - t->c)
+    t->wrap = false;
+    if (n > (uint32_t)(t->w - t->c))
         n = t->w - t->c;
     if (n == 0)
         return;
@@ -370,12 +526,47 @@ void vt_term_delete_characters(
     {
         rp[to++] = rp[fr++];
     }
-    vt_cell_attr_t a = vt_cell_get_attr(rp[t->w - n]); // Copied from libtmt; is this correct?
-    vt_cell_t cb = vt_cell_combine(a, (vt_char_t)' ');
-    while (to < t->w)
-    {
-        rp[to++] = cb;
-    }
+    // The cells freed at the end of the line are erased (as xterm)
+    vt_term_clear_line(t, t->r, to, t->w);
+}
+
+void vt_term_erase_characters(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of characters to erase (note: 0 means 0)
+)
+{
+    t->wrap = false;
+    if (n > (uint32_t)(t->w - t->c))
+        n = t->w - t->c;
+    vt_term_clear_line(t, t->r, t->c, t->c + n);
+}
+
+// Lines are only inserted or deleted inside the scroll region; the cursor moves to column 0
+static bool vt_term_line_edit_start(
+    vt_term_t *t // The terminal
+) {
+    t->wrap = false;
+    if (t->r < t->mt || t->r > t->mb) return false;
+    t->c = 0;
+    return true;
+}
+
+void vt_term_insert_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to insert (note: 0 means 0)
+)
+{
+    if (!vt_term_line_edit_start(t)) return;
+    vt_term_scroll_down(t, t->r, n > t->h ? t->h : n);
+}
+
+void vt_term_delete_lines(
+    vt_term_t *t, // The terminal
+    uint32_t n    // The number of lines to delete (note: 0 means 0)
+)
+{
+    if (!vt_term_line_edit_start(t)) return;
+    vt_term_scroll_up(t, t->r, n > t->h ? t->h : n);
 }
 /**
  * @brief Erases part or all of the current line in the terminal based on the specified mode.
@@ -395,6 +586,7 @@ void vt_term_erase_in_line(
     uint32_t p0   // Parameter to specify the erase mode (0, 1, 2)
 )
 {
+    t->wrap = false;
     switch (p0)
     {
     case 0:
@@ -441,9 +633,10 @@ void vt_term_repeat(
     vt_term_t *t, // The terminal
     uint32_t n    // The number of characters to repeat
 ) {
-    if (!t->c) return;
+    // With a wrap pending the last character is under the cursor, otherwise just before it
+    if (!t->wrap && !t->c) return;
     vt_cell_t *rp = t->rp[t->r];
-    vt_char_t ch = rp[t->c - 1];
+    vt_char_t ch = vt_cell_get_char(rp[t->wrap ? t->c : t->c - 1]);
     for (vt_coord_t i = 0; i < n; i++) {
         vt_term_putch(t, ch);
     }
@@ -452,7 +645,7 @@ void vt_term_repeat(
 void vt_term_reverse_nl(
     vt_term_t *t // The terminal
 ) {
-    t->hang = VT_HANG_NONE;
+    t->wrap = false;
 
     if (t->r == t->mt) {
         vt_term_scroll_down(t, t->mt, 1);
@@ -462,17 +655,10 @@ void vt_term_reverse_nl(
     }
 }
 
-void vt_term_nl(
+void vt_term_index(
     vt_term_t *t // The terminal
 ) {
-    if (t->hang != VT_HANG_NONE)
-    {
-        if (t->hang == VT_HANG_BOTTOM) {
-            vt_term_scroll_up(t, t->mt, 1);
-        }
-        t->hang = VT_HANG_NONE;
-        return;
-    }
+    t->wrap = false;
 
     if (t->r == t->mb) {
         vt_term_scroll_up(t, t->mt, 1);
@@ -482,37 +668,47 @@ void vt_term_nl(
     }
 }
 
-void vt_term_cr(
+void vt_term_nl(
     vt_term_t *t // The terminal
 ) {
-    t->c = 0;
-    if (t->hang == VT_HANG_LINE)
-    {
-        t->hang = VT_HANG_NONE;
-        if (t->r > t->mt && t->r <= t->mb) {
-            t->r--;
-        }
+    vt_term_index(t);
+    if (t->flags & VT_TERM_MODE_LNM) {
+        t->c = 0;
     }
 }
 
+void vt_term_cr(
+    vt_term_t *t // The terminal
+) {
+    t->wrap = false;
+    t->c = 0;
+}
+
+// Moving down stops at the bottom margin, unless already below it
 void vt_term_cursor_down(
     vt_term_t *t,
     vt_coord_t n
 ) {
-    t->r = t->r + n >= t->h ? t->h - 1 : t->r + n;
+    t->wrap = false;
+    vt_coord_t b = t->r <= t->mb ? t->mb : t->h - 1;
+    t->r = b - t->r > n ? t->r + n : b;
 }
 
+// Moving up stops at the top margin, unless already above it
 void vt_term_cursor_up(
     vt_term_t *t,
     vt_coord_t n
 ) {
-    t->r = t->r >= n ? t->r - n : 0;
+    t->wrap = false;
+    vt_coord_t b = t->r >= t->mt ? t->mt : 0;
+    t->r = t->r - b > n ? t->r - n : b;
 }
 
 void vt_term_cursor_left(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->c = t->c >= n ? t->c - n : 0;
 }
 
@@ -520,6 +716,7 @@ void vt_term_cursor_right(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    t->wrap = false;
     t->c = t->c + n >= t->w ? t->w - 1 : t->c + n;
 }
 
@@ -527,14 +724,14 @@ void vt_term_next_line_down(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    vt_term_cursor_down(t, n);
     t->c = 0;
-    t->r = t->r + n >= t->h ? t->h - 1 : t->r + n;
 }
 
 void vt_term_next_line_up(
     vt_term_t *t,
     vt_coord_t n
 ) {
+    vt_term_cursor_up(t, n);
     t->c = 0;
-    t->r = t->r >= n ? t->r - n : 0;
 }

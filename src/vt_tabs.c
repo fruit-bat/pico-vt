@@ -65,6 +65,26 @@ void vt_tabs_init(
     t->w = w;
 }
 
+void vt_tabs_resize(
+    vt_tabs_t *t,  // The tabs structure
+    vt_coord_t w,  // The new width of the screen
+    vt_coord_t tw  // The width of tabs (default 8)
+) {
+    if (w > VT_SCREEN_MAX_COLS) w = VT_SCREEN_MAX_COLS;
+    if (w == 0) w = 1;
+    const vt_coord_t ow = t->w;
+    if (w > ow) {
+        // The old last column only had a stop for being the last column
+        if ((ow - 1) % tw != 0) _vt_tabs_clear_tab(t, ow - 1);
+        for (vt_coord_t i = ow; i < w; i++) {
+            if (i % tw == 0) _vt_tabs_set_tab(t, i);
+            else _vt_tabs_clear_tab(t, i);
+        }
+    }
+    _vt_tabs_set_tab(t, w - 1);
+    t->w = w;
+}
+
 void vt_tabs_clear_all(
     vt_tabs_t *t  // The tabs structure
 ) {

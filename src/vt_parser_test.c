@@ -111,6 +111,68 @@ int main() {
         assert(p.params[5] == 0);
     }
     {
+        // OSC command numbers can be more than one digit
+        const vt_state_t* s = vt_parser_put_str(&p, (vt_char_t*)"\033]11;?\007");
+        assert(s != NULL && s->n == VT_A_OSC);
+        assert(p.n_params == 1 && p.params[0] == 11);
+        assert(strcmp((char*)p.osc_param, "?") == 0);
+
+        // ESC \ (ST) ends an OSC string
+        s = vt_parser_put_str(&p, (vt_char_t*)"\033]0;a title\033\\");
+        assert(s != NULL && s->n == VT_A_OSC);
+        assert(p.params[0] == 0);
+        assert(strcmp((char*)p.osc_param, "a title") == 0);
+        s = vt_parser_put_ch(&p, 'A');
+        assert(s != NULL && s->n == VT_A_CHAR);
+
+        // Empty OSC strings end too
+        s = vt_parser_put_str(&p, (vt_char_t*)"\033]\033\\");
+        assert(s != NULL && s->n == VT_A_OSC);
+        s = vt_parser_put_str(&p, (vt_char_t*)"\033]\007");
+        assert(s != NULL && s->n == VT_A_OSC);
+
+        // ESC followed by anything else abandons the OSC
+        s = vt_parser_put_str(&p, (vt_char_t*)"\033]0;x\033y");
+        assert(s == NULL);
+        s = vt_parser_put_ch(&p, 'B');
+        assert(s != NULL && s->n == VT_A_CHAR);
+    }
+    {
+        // A C0 control within a sequence is executed and the sequence carries on
+        const vt_state_t* s = vt_parser_put_str(&p, (vt_char_t*)"\033[1;");
+        assert(s != NULL && !(s->f & VT_F_FINAL));
+        s = vt_parser_put_ch(&p, '\b');
+        assert(s != NULL && (s->f & VT_F_FINAL) && s->n == VT_A_C0_BS);
+        s = vt_parser_put_ch(&p, 0x7F); // DEL is ignored
+        assert(s == NULL);
+        s = vt_parser_put_str(&p, (vt_char_t*)"2H");
+        assert(s != NULL && s->n == VT_A_CUP);
+        assert(p.n_params == 2 && p.params[0] == 1 && p.params[1] == 2);
+
+        // CAN abandons the sequence
+        s = vt_parser_put_str(&p, (vt_char_t*)"\033[1\x18");
+        assert(s == NULL);
+        s = vt_parser_put_ch(&p, 'A');
+        assert(s != NULL && s->n == VT_A_CHAR);
+
+        // ESC abandons the sequence and starts another
+        s = vt_parser_put_str(&p, (vt_char_t*)"\033[1\033[2J");
+        assert(s != NULL && s->n == VT_A_ED);
+        assert(p.n_params == 1 && p.params[0] == 2);
+    }
+    {
+        // Large parameters saturate rather than overflow
+        const vt_state_t* s = vt_parser_put_str(&p, (vt_char_t*)"\033[65535;65536;99999999999999999999;0065535;7m");
+        assert(s != NULL);
+        assert(s->n == VT_A_SGR);
+        assert(p.n_params == 5);
+        assert(p.params[0] == VT_PARSER_MAX_PARAM);
+        assert(p.params[1] == VT_PARSER_MAX_PARAM);
+        assert(p.params[2] == VT_PARSER_MAX_PARAM);
+        assert(p.params[3] == 65535);
+        assert(p.params[4] == 7);
+    }
+    {
         const vt_state_t* s = vt_parser_put_str(&p, (vt_char_t*)"\033[m"); // ESC
         assert(s != NULL);
         assert(s->m == 'm');

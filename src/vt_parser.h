@@ -101,6 +101,13 @@ typedef enum {
     VT_A_SGR,         // Select Graphic Rendition
     VT_A_DECSTBM,     // Set Top and Bottom Margins
     VT_A_DA,          // Device Attributes
+    VT_A_DSR,         // Device Status Report
+    VT_A_IL,          // IL  - Insert lines
+    VT_A_DL,          // DL  - Delete lines
+    VT_A_DCH,         // DCH - Delete characters
+    VT_A_ECH,         // ECH - Erase characters
+    VT_A_VPA,         // VPA - Vertical position absolute
+    VT_A_RIS,         // RIS - Reset to initial state (ESC c)
     VT_A_RM,          // Reset Mode
     VT_A_SM,          // Set Mode
     VT_A_SU,          // Scroll Up
@@ -108,11 +115,14 @@ typedef enum {
     VT_A_REP,         // Repeat
     VT_A_HTB,         // ESC [Zr          - Horizontal tab backward
     VT_A_HTC,         // ESC [g           - Clear horizontal tabs
+    VT_A_XTWINOPS,    // ESC [n;n;nt      - Window operations (xterm): size requests and reports
 
 
     // https://en.wikipedia.org/wiki/DEC_Special_Graphics
     VT_A_DEC_SP_ON,   // DEC special graphics on (box drawing characters)
     VT_A_DEC_SP_OFF,  // DEC special graphics off (lower case letters)
+    VT_A_G1_DEC_SP_ON,  // As VT_A_DEC_SP_ON for G1 (ESC ) 0)
+    VT_A_G1_DEC_SP_OFF, // As VT_A_DEC_SP_OFF for G1 (ESC ) B)
 
     VT_A_XPALS,       // Linux set pallet 
     VT_A_XPALR,       // Linux reset pallet
@@ -130,6 +140,7 @@ typedef enum {
     VT_F_NXT_P   = 0x08, // Next parameter
     VT_F_COL_CH  = 0x10, // Collect a character
     VT_F_COL_OSC = 0x20, // Collect OSC string
+    VT_F_COL_PFX = 0x40, // Collect a CSI private prefix character (? > = <)
 } vt_f_t;   
 
 typedef struct {
@@ -138,10 +149,15 @@ typedef struct {
     uint8_t f;      // Flags
 } vt_state_t;
 
+// Numeric parameters saturate at this value rather than overflowing (as xterm).
+// It also keeps every parameter within vt_coord_t.
+#define VT_PARSER_MAX_PARAM 65535
+
 typedef struct {
     const vt_state_t* state;       // Current state
     uint32_t params[16];           // Parameters collected
     uint8_t n_params;              // Number of parameters collected
+    vt_char_t prefix;              // CSI private prefix (e.g. '?'), 0 if none
     vt_char_t ch;
     vt_char_t osc_param[128];      // Control sequences & title
     uint8_t osc_param_len;
@@ -151,11 +167,14 @@ void vt_parser_init(vt_parser_t *p);
 
 void vt_parser_reset(vt_parser_t *p);
 
+// True between sequences (no escape sequence is part way through)
+bool vt_parser_in_ground(const vt_parser_t *p);
+
 const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch);
 
 const vt_state_t* vt_parser_put_str(vt_parser_t *p, vt_char_t* s);
 
-const vt_a_t vt_parser_action_from_state(const vt_state_t *s);
+vt_a_t vt_parser_action_from_state(const vt_state_t *s);
 
 #ifdef __cplusplus
 }

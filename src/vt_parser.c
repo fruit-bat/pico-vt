@@ -100,6 +100,8 @@ typedef enum {
     VT_G_OSC_C,
     VT_G_OSC_D,
     VT_G_ESC_OB,
+    VT_G_ESC_CB,
+    VT_G_OSC_ESC,
 } vt_g_t;
 
 const vt_state_t vt_states_ground[] = {
@@ -141,6 +143,7 @@ const vt_state_t vt_states_esc[] = {
     {'E',          VT_A_NEL,          VT_F_FINAL},   // ESC E
     {'H',          VT_A_HTS,          VT_F_FINAL},   // ESC H
     {'M',          VT_A_RI,           VT_F_FINAL},   // ESC M
+    {'c',          VT_A_RIS,          VT_F_FINAL},   // ESC c
     {'N',          VT_A_SS2,          VT_F_FINAL},   // ESC N
     {'O',          VT_A_SS3,          VT_F_FINAL},   // ESC O
     {'P',          VT_A_DCS,          VT_F_FINAL},   // ESC P
@@ -150,10 +153,15 @@ const vt_state_t vt_states_esc[] = {
     {'7',          VT_A_SAVE_CUR,     VT_F_FINAL},   // ESC 7
     {'8',          VT_A_RESTORE_CUR,  VT_F_FINAL},   // ESC 8
     {'(',          VT_G_ESC_OB,       VT_F_NEXT_CH}, // ESC (
+    {')',          VT_G_ESC_CB,       VT_F_NEXT_CH}, // ESC )
 };
 const vt_state_t vt_states_csi[] = {
     {'s',          VT_A_SAVE_CUR,     VT_F_FINAL},   // ESC [s
     {'u',          VT_A_RESTORE_CUR,  VT_F_FINAL},   // ESC [u
+    {'?',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [? (DEC private)
+    {'>',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [>
+    {'=',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [=
+    {'<',          VT_G_CSI,          VT_F_COL_PFX|VT_F_NEXT_CH}, // ESC [<
     {VT_M_DIGIT,   VT_G_CSI_P,        VT_F_NXT_P|VT_F_COL_P|VT_F_NEXT_CH}, // ESC [0-9
     {';',          VT_G_CSI_P,        VT_F_NXT_P},
     {VT_M_CHAR,    VT_G_CSI_F,        VT_F_NONE},    // ESC [c
@@ -175,21 +183,32 @@ const vt_state_t vt_states_csi_f[] = {
     {'I',          VT_A_CHT,          VT_F_FINAL}, // ESC [nI          - Horizonal tab forward
     {'J',          VT_A_ED,           VT_F_FINAL}, // ESC [nJ
     {'K',          VT_A_EL,           VT_F_FINAL}, // ESC [nK
+    {'L',          VT_A_IL,           VT_F_FINAL}, // ESC [nL          - Insert lines
+    {'M',          VT_A_DL,           VT_F_FINAL}, // ESC [nM          - Delete lines
+    {'P',          VT_A_DCH,          VT_F_FINAL}, // ESC [nP          - Delete characters
     {'S',          VT_A_SU,           VT_F_FINAL}, // ESC [nS
     {'T',          VT_A_SD,           VT_F_FINAL}, // ESC [nT
+    {'X',          VT_A_ECH,          VT_F_FINAL}, // ESC [nX          - Erase characters
     {'Z',          VT_A_HTB,          VT_F_FINAL}, // ESC [nZ          - Horizontal tab backward
+    {'`',          VT_A_CHA,          VT_F_FINAL}, // ESC [n`          - HPA, same as CHA
     {'b',          VT_A_REP,          VT_F_FINAL}, // ESC [nr          - Repeat character
+    {'c',          VT_A_DA,           VT_F_FINAL}, // ESC [c           - Device attributes
+    {'d',          VT_A_VPA,          VT_F_FINAL}, // ESC [nd          - Vertical position absolute
     {'f',          VT_A_HVP,          VT_F_FINAL}, // ESC [nf
     {'g',          VT_A_HTC,          VT_F_FINAL}, // ESC [ng          - Clear horizontal tabs
     {'h',          VT_A_SM,           VT_F_FINAL}, // ESC [?n;h
     {'l',          VT_A_RM,           VT_F_FINAL}, // ESC [?n;l
     {'m',          VT_A_SGR,          VT_F_FINAL}, // ESC [n;n;...m
+    {'n',          VT_A_DSR,          VT_F_FINAL}, // ESC [nn          - Device status report
     {'r',          VT_A_DECSTBM,      VT_F_FINAL}, // ESC [t;r
+    {'t',          VT_A_XTWINOPS,     VT_F_FINAL}, // ESC [n;n;nt      - Window operations (xterm)
     {'@',          VT_A_ICH,          VT_F_FINAL}, // ESC [n@          - Insert characters
 };
 const vt_state_t vt_states_osc[] = {
     {'P',          VT_G_OSC_P1,       VT_F_NEXT_CH},  // Linux set pallet ESC ] P n r r g g b b
     {'R',          VT_A_XPALR,        VT_F_FINAL},    // Linux reset pallet ESC ] R
+    {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL},    // Empty OSC
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH},  // Empty OSC ended by ESC \ (ST)
     // TODO at least parse out the command - up to the first ;
     // The command can go into the numeric parameters
     {VT_M_CHAR,    VT_G_OSC_T,        VT_F_NONE},     // ESC ]
@@ -204,18 +223,25 @@ const vt_state_t vt_states_osc_p7[] = {{VT_M_CHAR, VT_A_XPALS,  VT_F_COL_OSC|VT_
 const vt_state_t vt_states_osc_t[] = {
     {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL}, // OSC terminator
     {VT_M_ST,      VT_A_OSC,          VT_F_FINAL}, // OSC terminator
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH}, // ESC \ terminator
     {VT_M_DIGIT,   VT_G_OSC_C,        VT_F_NXT_P|VT_F_COL_P|VT_F_NEXT_CH}, // ESC [0-9
 };
 const vt_state_t vt_states_osc_c[] = {
     {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL}, // OSC terminator
     {VT_M_ST,      VT_A_OSC,          VT_F_FINAL}, // OSC terminator
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH}, // ESC \ terminator
+    {VT_M_DIGIT,   VT_G_OSC_C,        VT_F_COL_P|VT_F_NEXT_CH}, // More of the command number
     {';',          VT_G_OSC_D,        VT_F_NEXT_CH},
     {VT_M_ANY,     VT_G_OSC_C,        VT_F_COL_OSC|VT_F_NEXT_CH} // Collect OSC character
 };
 const vt_state_t vt_states_osc_d[] = {
     {VT_M_C0_BEL,  VT_A_OSC,          VT_F_FINAL}, // OSC terminator
     {VT_M_ST,      VT_A_OSC,          VT_F_FINAL}, // OSC terminator
+    {VT_M_C0_ESC,  VT_G_OSC_ESC,      VT_F_NEXT_CH}, // ESC \ terminator
     {VT_M_ANY,     VT_G_OSC_D,        VT_F_COL_OSC|VT_F_NEXT_CH} // Collect OSC character  
+};
+const vt_state_t vt_states_osc_esc[] = {
+    {'\\',         VT_A_OSC,          VT_F_FINAL}, // ESC \ (ST) ends the OSC; anything else abandons it
 };
 const vt_state_t vt_states_esc_ob[] = { // ESC(
     {'0',          VT_A_DEC_SP_ON,    VT_F_FINAL}, // Turn on DEC special graphics (box drawing)
@@ -223,6 +249,13 @@ const vt_state_t vt_states_esc_ob[] = { // ESC(
     {'B',          VT_A_DEC_SP_OFF,   VT_F_FINAL}, // Turn off DEC special graphics (box drawing)
     {'1',          VT_A_DEC_SP_OFF,   VT_F_FINAL}, // Turn off DEC special graphics (box drawing)
     {'2',          VT_A_DEC_SP_OFF,   VT_F_FINAL}, // Turn off DEC special graphics (box drawing)
+};
+const vt_state_t vt_states_esc_cb[] = { // ESC) - as ESC( but for G1
+    {'0',          VT_A_G1_DEC_SP_ON,  VT_F_FINAL},
+    {'A',          VT_A_G1_DEC_SP_OFF, VT_F_FINAL},
+    {'B',          VT_A_G1_DEC_SP_OFF, VT_F_FINAL},
+    {'1',          VT_A_G1_DEC_SP_OFF, VT_F_FINAL},
+    {'2',          VT_A_G1_DEC_SP_OFF, VT_F_FINAL},
 };
 
 #define STATE_PTR(X) ((vt_state_t*)X) 
@@ -246,6 +279,8 @@ const vt_state_t* vt_state_grp[] = {
     STATE_PTR(vt_states_osc_c),
     STATE_PTR(vt_states_osc_d),
     STATE_PTR(vt_states_esc_ob),
+    STATE_PTR(vt_states_esc_cb),
+    STATE_PTR(vt_states_osc_esc),
 };
 
 #define COUNT_ARR(X) ((sizeof (X))/(sizeof (X)[0]))
@@ -269,12 +304,19 @@ const uint8_t vt_state_grp_len[] = {
     COUNT_ARR(vt_states_osc_c),
     COUNT_ARR(vt_states_osc_d),
     COUNT_ARR(vt_states_esc_ob),
+    COUNT_ARR(vt_states_esc_cb),
+    COUNT_ARR(vt_states_osc_esc),
 };
 
 void vt_parser_reset(vt_parser_t *p) {
     p->state = NULL;
     p->n_params = 0;
+    p->prefix = 0;
     p->osc_param_len = 0;
+}
+
+bool vt_parser_in_ground(const vt_parser_t *p) {
+    return p->state == NULL || (p->state->f & VT_F_FINAL);
 }
 
 void vt_parser_init(vt_parser_t *p) {
@@ -296,12 +338,38 @@ bool vt_parser_match_ch(vt_match_t m, vt_char_t ch) {
     }
 }
 
+// Escape and control sequences (but not OSC strings), within which C0 controls
+// are executed without disturbing the sequence (as the DEC VT500 parser and xterm)
+static bool vt_parser_in_sequence(vt_g_t g) {
+    return g == VT_G_ESC || g == VT_G_CSI || g == VT_G_CSI_P || g == VT_G_CSI_F ||
+           g == VT_G_ESC_OB || g == VT_G_ESC_CB;
+}
+
 const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
         
     const vt_state_t* ps = p->state;
     vt_g_t g = ps && !(ps->f & VT_F_FINAL) ? (vt_g_t)ps->n : VT_G_GROUND;
+    if (vt_parser_in_sequence(g) && (ch < 0x20 || ch == VT_M_C0_DEL)) {
+        if (ch == VT_M_C0_CAN || ch == VT_M_C0_SUB) {
+            // Abandon the sequence
+            vt_parser_init(p);
+            return NULL;
+        }
+        if (ch == VT_M_C0_ESC) {
+            // Abandon the sequence and start another
+            g = VT_G_GROUND;
+        }
+        else {
+            // Execute the control (DEL is ignored); the sequence carries on
+            for (uint8_t i = 0; i < COUNT_ARR(vt_states_c0); ++i) {
+                if (vt_states_c0[i].m == ch) return &vt_states_c0[i];
+            }
+            return NULL;
+        }
+    }
     if (g == VT_G_GROUND) {
         p->n_params = 0;
+        p->prefix = 0;
         p->osc_param_len = 0;
         p->osc_param[0] = 0;
     }
@@ -315,8 +383,11 @@ const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
             if (s->f & VT_F_COL_CH) {
                 p->ch = ch;
             }
+            if (s->f & VT_F_COL_PFX) {
+                p->prefix = ch;
+            }
             if (s->f & VT_F_COL_OSC) {
-                if (p->osc_param_len + 2 < COUNT_ARR(p->osc_param)) {
+                if (p->osc_param_len + 2u < COUNT_ARR(p->osc_param)) {
                     p->osc_param[p->osc_param_len++] = ch;
                     p->osc_param[p->osc_param_len] = 0;
                 }
@@ -336,7 +407,9 @@ const vt_state_t* vt_parser_put_ch(vt_parser_t *p, vt_char_t ch) {
                 // Collect parameter digit
                 uint8_t pi = p->n_params - 1;
                 if (pi < COUNT_ARR(p->params)) {
-                    p->params[pi] = p->params[pi] * 10 + (ch - '0');
+                    // Saturate; the value is at most VT_PARSER_MAX_PARAM so this can't overflow
+                    const uint32_t v = p->params[pi] * 10 + (ch - '0');
+                    p->params[pi] = v > VT_PARSER_MAX_PARAM ? VT_PARSER_MAX_PARAM : v;
                 }
             }
             if (s->f & (VT_F_NEXT_CH | VT_F_FINAL)) {
@@ -365,7 +438,7 @@ const vt_state_t* vt_parser_put_str(vt_parser_t *p, vt_char_t* s) {
     return last;
 }
 
-const vt_a_t vt_parser_action_from_state(const vt_state_t *s) {
+vt_a_t vt_parser_action_from_state(const vt_state_t *s) {
     return (s == NULL) || ((s->f & VT_F_FINAL) ==0)
         ? VT_A_NONE
         : s->n;

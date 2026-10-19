@@ -1,0 +1,18 @@
+name: test
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Unit tests (ASan + UBSan)
+        run: make test
+      - name: Desktop harness smoke test
+        run: |
+          make harness
+          build-test/vt_harness -H -d -s 40x5 -- printf 'hello\n\033[1mharness' | tee harness.txt
+          grep -qx 'hello' harness.txt && grep -qx 'harness' harness.txt

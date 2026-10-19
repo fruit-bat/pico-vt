@@ -45,6 +45,14 @@ extern "C"
         vt_coord_t tw  // The width of tabs (default 8)
     );
 
+    // Change the width, keeping the tab stops already set. New columns get
+    // the default stops and, as vt_tabs_init, the last column has one.
+    void vt_tabs_resize(
+        vt_tabs_t *t,  // The tabs structure
+        vt_coord_t w,  // The new width of the screen
+        vt_coord_t tw  // The width of tabs (default 8)
+    );
+
     void vt_tabs_clear_all(
         vt_tabs_t *t   // The tabs structure
     );
