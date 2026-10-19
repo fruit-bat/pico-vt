@@ -115,6 +115,7 @@ typedef enum {
     VT_A_REP,         // Repeat
     VT_A_HTB,         // ESC [Zr          - Horizontal tab backward
     VT_A_HTC,         // ESC [g           - Clear horizontal tabs
+    VT_A_XTWINOPS,    // ESC [n;n;nt      - Window operations (xterm): size requests and reports
 
 
     // https://en.wikipedia.org/wiki/DEC_Special_Graphics

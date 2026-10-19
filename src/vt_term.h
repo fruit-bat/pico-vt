@@ -35,8 +35,6 @@ extern "C"
 {
 #endif
 
-#define VT_SCREEN_MAX_COLS 80
-#define VT_SCREEN_MAX_ROWS 60
 #define VT_TERM_DEFAULT_BG 0
 #define VT_TERM_DEFAULT_FG 7 // Light grey (as xterm)
 #define VT_TERM_DEFAULT_FLAGS VT_CELL_FLAGS_NORMAL
@@ -60,10 +58,19 @@ extern "C"
 //   Since the cursor never left the last column, they act on the row and
 //   column the character was written to.
 
-typedef struct 
+// Size and capacity: the grid is laid out for a capacity (cw x ch cells, cw
+// cells per row) and the terminal uses the top left w x h of it. Resizing
+// within the capacity moves no cells and allocates nothing. Every row pointer
+// up to the capacity is always valid, so a renderer on another core that reads
+// w, h and rp while a resize is under way may show one odd frame but never
+// reads outside the grid (it should clamp to the capacity it allocated).
+
+typedef struct
 {
     vt_coord_t w; // Terminal width in characters
     vt_coord_t h; // Terminal height in characters
+    vt_coord_t cw; // Capacity width (the grid's cells per row)
+    vt_coord_t ch; // Capacity height (the grid's rows)
     vt_coord_t mt; // Margin top row
     vt_coord_t mb; // Margin bottom row
     vt_coord_t r; // Cursor row
@@ -75,7 +82,7 @@ typedef struct
     bool s_origin; // Saved origin mode
     bool wrap; // Wrap pending (deferred wrap at the last column)
     uint32_t flags; // Modes (VT_TERM_MODE_xxx)
-    vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers (of the screen in use)
+    vt_cell_t* rp[VT_SCREEN_MAX_ROWS]; // Row pointers (of the screen in use), ch of them
     vt_cell_t* alt_rp[VT_SCREEN_MAX_ROWS]; // Row pointers of the screen not in use
     bool alt;        // An alternate screen has been provided
     bool alt_active; // The alternate screen is in use
@@ -103,6 +110,7 @@ static inline bool vt_term_mode_get(
     return (t->flags & mode) != 0;
 }
 
+// A terminal that fills its grid (w x h cells), so it can't grow
 void vt_term_init(
     vt_term_t* t, // The terminal
     vt_cell_t* grid, // Cell grid for the display
@@ -110,12 +118,36 @@ void vt_term_init(
     vt_coord_t h  // Terminal height in characters
 );
 
+// A terminal of w x h in a grid of cw x ch cells (cw per row), so it can be
+// resized up to cw x ch. The capacity is limited to VT_SCREEN_MAX_COLS x
+// VT_SCREEN_MAX_ROWS and the size to the capacity.
+void vt_term_init_cap(
+    vt_term_t* t,    // The terminal
+    vt_cell_t* grid, // Cell grid for the display, cw x ch
+    vt_coord_t cw,   // Capacity width in characters
+    vt_coord_t ch,   // Capacity height in characters
+    vt_coord_t w,    // Terminal width in characters
+    vt_coord_t h     // Terminal height in characters
+);
+
+// Change the size, within the capacity (and at least 1 x 1), as xterm:
+// - Text is not reflowed. Shrinking hides cells, growing shows blank ones.
+// - If the cursor would be below the new bottom, the active screen scrolls up
+//   to keep the cursor's line in view (lines leaving the top are lost).
+// - The scroll region is reset to the whole screen, the cursor (and saved
+//   cursor) are kept on the screen and a pending wrap is cancelled.
+void vt_term_resize(
+    vt_term_t* t, // The terminal
+    vt_coord_t w, // New width in characters
+    vt_coord_t h  // New height in characters
+);
+
 // Returns to the normal screen if the alternate screen is in use
 void vt_term_reset(
     vt_term_t* t  // The terminal
 );
 
-// Provide a grid (the same size as the main one) for the alternate screen,
+// Provide a grid (the same capacity as the main one) for the alternate screen,
 // or NULL for none. The grid is cleared.
 void vt_term_alt_init(
     vt_term_t* t,   // The terminal

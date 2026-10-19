@@ -1193,6 +1193,97 @@ void test_alt_screen(vt_term_t *t) {
     check_grid_blank(t);
 }
 
+void test_resize() {
+    printf("\nTesting resize\n");
+    vt_cell_t grid[H][W];
+    vt_cell_t alt[H][W];
+    vt_term_t tt;
+    vt_term_t *t = &tt;
+
+    // A 10 x 6 terminal that can grow to W x H
+    vt_term_init_cap(t, (vt_cell_t*)grid, W, H, 10, 6);
+    assert(t->w == 10 && t->h == 6 && t->cw == W && t->ch == H);
+    check_grid_blank(t);
+    // Rows of the capacity are W apart
+    assert(t->rp[1] == t->rp[0] + W);
+
+    // Growing wider shows blank cells, not what was beyond the old width
+    set_grid_rows(t);
+    t->rp[0][15] = vt_cell_combine(0, 'x');
+    vt_term_resize(t, W, 6);
+    check_grid_row(t, 0, "AAAAAAAAAA          ");
+    check_grid_row(t, 5, "FFFFFFFFFF          ");
+
+    // Shrinking hides cells; growing again shows them blank
+    vt_term_resize(t, 5, 6);
+    check_grid_row(t, 2, "CCCCC");
+    vt_term_resize(t, 10, 6);
+    check_grid_row(t, 2, "CCCCC     ");
+
+    // Shrinking the height with the cursor near the top keeps the top
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 1, 9);
+    vt_term_resize(t, 10, 3);
+    check_grid_rows(t, "ABC");
+    check_cursor(t, 1, 9, false);
+
+    // Growing the height shows blank rows
+    vt_term_resize(t, 10, 6);
+    check_grid_rows(t, "ABC???");
+    check_rows_blank(t, 3, 6);
+
+    // Shrinking the height with the cursor below the new bottom scrolls up
+    // to keep the cursor's line in view
+    set_grid_rows(t);
+    vt_term_cursor_set(t, 5, 3);
+    vt_term_resize(t, 10, 3);
+    check_grid_rows(t, "DEF");
+    check_cursor(t, 2, 3, false);
+    // The lines scrolled off the top don't come back
+    vt_term_resize(t, 10, 6);
+    check_grid_rows(t, "DEF???");
+    check_rows_blank(t, 3, 6);
+
+    // The scroll region is reset, the cursors are kept on the screen and a
+    // pending wrap is cancelled
+    vt_term_margin_set(t, 1, 4);
+    vt_term_cursor_set(t, 4, 8);
+    vt_term_save_cursor(t);
+    vt_term_cursor_set(t, 2, 9);
+    put_str(t, "w");
+    assert(t->wrap);
+    vt_term_resize(t, 6, 6);
+    assert(t->mt == 0 && t->mb == 5);
+    check_cursor(t, 2, 5, false);
+    vt_term_restore_cursor(t);
+    check_cursor(t, 4, 5, false);
+
+    // The size is limited to the capacity and is at least 1 x 1
+    vt_term_resize(t, W + 5, H + 5);
+    assert(t->w == W && t->h == H);
+    vt_term_resize(t, 0, 0);
+    assert(t->w == 1 && t->h == 1);
+    check_cursor(t, 0, 0, false);
+
+    // Both screens are resized
+    vt_term_resize(t, 10, 6);
+    vt_term_alt_init(t, (vt_cell_t*)alt);
+    set_grid_rows(t);
+    vt_term_alt_set(t, true);
+    set_grid_cols(t);
+    vt_term_resize(t, 12, 7);
+    check_grid_row(t, 0, "ABCDEFGHIJ  ");
+    check_grid_row(t, 6, "            ");
+    vt_term_alt_set(t, false);
+    check_grid_row(t, 0, "AAAAAAAAAA  ");
+    check_grid_row(t, 6, "            ");
+    // Including the rows out of view
+    vt_term_resize(t, 12, H);
+    check_rows_blank(t, 7, H);
+    vt_term_alt_set(t, true);
+    check_rows_blank(t, 7, H);
+}
+
 int main() {
     vt_cell_t grid[H][W];
     vt_term_t t;
@@ -1237,6 +1328,7 @@ int main() {
     test_reset(&t);
     test_alt_screen(&t);
     test_clear_screen_tall();
+    test_resize();
 
     printf("all ok\n");
     return 0;

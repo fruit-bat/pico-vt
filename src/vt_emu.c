@@ -10,6 +10,7 @@
 typedef unsigned long ul;
 
 static void vt_emu_reset_text(vt_emu_t *e);
+uint32_t vt_emu_get_p0(vt_parser_t* p, uint32_t i);
 
 void vt_emu_init(
     vt_emu_t* e,     // Emulator
@@ -17,23 +18,57 @@ void vt_emu_init(
     vt_coord_t w,    // Terminal width in characters
     vt_coord_t h     // Terminal height in characters
 ) {
+    vt_emu_init_cap(e, grid, w, h, w, h);
+}
+
+void vt_emu_init_cap(
+    vt_emu_t* e,     // Emulator
+    vt_cell_t* grid, // Cell grid for the display, cw x ch
+    vt_coord_t cw,   // Capacity width in characters
+    vt_coord_t ch,   // Capacity height in characters
+    vt_coord_t w,    // Terminal width in characters
+    vt_coord_t h     // Terminal height in characters
+) {
     vt_parser_init(
         &e->parser
     );
-    vt_term_init(
+    vt_term_init_cap(
         &e->term,
         grid,
+        cw,
+        ch,
         w,
         h
     );
     vt_tabs_init(
         &e->tabs,
-        w,
+        e->term.w,
         8
     );
     vt_emu_set_reply(e, NULL, NULL);
+    vt_emu_set_resize_req(e, NULL, NULL);
+    vt_emu_set_cell_size(e, 0, 0);
     vt_emu_set_charmap(e, vt_charmap_ascii);
     vt_emu_reset_text(e);
+    e->resize_report = false;
+}
+
+void vt_emu_set_resize_req(
+    vt_emu_t *e,
+    vt_emu_resize_req_t resize_req,
+    void* ctx
+) {
+    e->resize_req = resize_req;
+    e->resize_req_ctx = ctx;
+}
+
+void vt_emu_set_cell_size(
+    vt_emu_t *e,
+    uint16_t pw,
+    uint16_t ph
+) {
+    e->cell_pw = pw;
+    e->cell_ph = ph;
 }
 
 void vt_emu_set_charmap(
@@ -112,6 +147,87 @@ static void vt_emu_reply(
     if (e->reply) e->reply(e->reply_ctx, (const vt_char_t*)s, (uint32_t)strlen(s));
 }
 
+// Reply with ESC [ v0 ; v1 ; ... t (the form of the window operation reports)
+static void vt_emu_reply_csi_t(
+    vt_emu_t *e,
+    const uint32_t *v,
+    uint32_t n
+) {
+    char s[64];
+    char *q = s;
+    *q++ = '\033';
+    *q++ = '[';
+    for (uint32_t i = 0; i < n; ++i) {
+        if (i) *q++ = ';';
+        q = vt_emu_put_dec(q, v[i]);
+    }
+    *q++ = 't';
+    *q = 0;
+    vt_emu_reply(e, s);
+}
+
+// In-band resize notification (mode ?2048): ESC [ 48 ; h ; w ; hpx ; wpx t
+static void vt_emu_report_size(
+    vt_emu_t *e
+) {
+    const vt_term_t* const t = &e->term;
+    const uint32_t v[] = {48, t->h, t->w, (uint32_t)t->h * e->cell_ph, (uint32_t)t->w * e->cell_pw};
+    vt_emu_reply_csi_t(e, v, 5);
+}
+
+void vt_emu_resize(
+    vt_emu_t *e,
+    vt_coord_t w,
+    vt_coord_t h
+) {
+    vt_term_t* const t = &e->term;
+    const vt_coord_t ow = t->w;
+    const vt_coord_t oh = t->h;
+    vt_term_resize(t, w, h);
+    vt_tabs_resize(&e->tabs, t->w, 8);
+    if (e->resize_report && (t->w != ow || t->h != oh)) vt_emu_report_size(e);
+}
+
+// XTWINOPS (ESC [ n ; ... t): the size requests and reports
+static void vt_emu_window_ops(
+    vt_emu_t *e
+) {
+    vt_term_t* const t = &e->term;
+    vt_parser_t* const p = &e->parser;
+    const bool px = e->cell_pw && e->cell_ph; // The cell size in pixels is known
+    switch (vt_emu_get_p0(p, 0)) {
+        case 8: { // Resize to h x w: an omitted size is unchanged, 0 is the most there is
+            uint32_t h = p->n_params > 1 ? p->params[1] : t->h;
+            uint32_t w = p->n_params > 2 ? p->params[2] : t->w;
+            if (h == 0 || h > t->ch) h = t->ch;
+            if (w == 0 || w > t->cw) w = t->cw;
+            DEBUG("XTWINOPS resize %lu x %lu\n", (ul)w, (ul)h);
+            if (e->resize_req) e->resize_req(e->resize_req_ctx, (vt_coord_t)w, (vt_coord_t)h);
+            break;
+        }
+        case 14: { // Report the text area size in pixels: ESC [ 4 ; hpx ; wpx t
+            const uint32_t v[] = {4, (uint32_t)t->h * e->cell_ph, (uint32_t)t->w * e->cell_pw};
+            if (px) vt_emu_reply_csi_t(e, v, 3);
+            break;
+        }
+        case 16: { // Report the cell size in pixels: ESC [ 6 ; hpx ; wpx t
+            const uint32_t v[] = {6, e->cell_ph, e->cell_pw};
+            if (px) vt_emu_reply_csi_t(e, v, 3);
+            break;
+        }
+        case 18: { // Report the text area size in characters: ESC [ 8 ; h ; w t
+            const uint32_t v[] = {8, t->h, t->w};
+            vt_emu_reply_csi_t(e, v, 3);
+            break;
+        }
+        case 19: { // Report the screen size (the most there could be) in characters: ESC [ 9 ; h ; w t
+            const uint32_t v[] = {9, t->ch, t->cw};
+            vt_emu_reply_csi_t(e, v, 3);
+            break;
+        }
+    }
+}
+
 // Text state that is not part of the terminal: the UTF-8 decoder and character sets
 static void vt_emu_reset_text(
     vt_emu_t *e
@@ -133,6 +249,7 @@ void vt_emu_reset(
     vt_term_reset(
         &e->term
     );
+    e->resize_report = false;
     vt_tabs_init(
         &e->tabs,
         e->term.w,
@@ -416,6 +533,10 @@ static void vt_emu_set_modes(
                 case 1047:
                 case 1048:
                 case 1049: vt_emu_alt_screen(e, p->params[i], on); break;
+                case 2048: // In-band resize notifications, starting with the size now
+                    e->resize_report = on;
+                    if (on) vt_emu_report_size(e);
+                    break;
             }
         }
         else {
@@ -758,6 +879,9 @@ static void vt_emu_put_byte(
         vt_term_repeat(t, n);
         break;
     }
+    case VT_A_XTWINOPS:    // Window operations (xterm)
+        vt_emu_window_ops(e);
+        break;
     case VT_A_XPALS:       // Linux set pallet 
         DEBUG("VT_A_XPALS\n");
         break;

@@ -201,6 +201,7 @@ const vt_state_t vt_states_csi_f[] = {
     {'m',          VT_A_SGR,          VT_F_FINAL}, // ESC [n;n;...m
     {'n',          VT_A_DSR,          VT_F_FINAL}, // ESC [nn          - Device status report
     {'r',          VT_A_DECSTBM,      VT_F_FINAL}, // ESC [t;r
+    {'t',          VT_A_XTWINOPS,     VT_F_FINAL}, // ESC [n;n;nt      - Window operations (xterm)
     {'@',          VT_A_ICH,          VT_F_FINAL}, // ESC [n@          - Insert characters
 };
 const vt_state_t vt_states_osc[] = {

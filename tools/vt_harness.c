@@ -62,13 +62,13 @@
 #define MAX_KEYS 64
 
 static vt_emu_t emu;
-// Packed cols x rows, as the library expects
+// The most the screen can be (the capacity), so it can be resized
 static vt_cell_t grid[VT_SCREEN_MAX_ROWS * VT_SCREEN_MAX_COLS];
 static vt_cell_t alt_grid[VT_SCREEN_MAX_ROWS * VT_SCREEN_MAX_COLS];
 static vt_cell_t shadow[VT_SCREEN_MAX_ROWS][VT_SCREEN_MAX_COLS]; // What is on the host screen
 static uint8_t rgb[256][3]; // The palette, as the Pico would show it
 
-static int cols = 80;
+static int cols = 80; // The size to start with
 static int rows = 24;
 static int master = -1;
 static pid_t child = -1;
@@ -77,6 +77,8 @@ static bool interactive = true;
 static struct termios saved_termios;
 static bool host_raw = false;
 static volatile sig_atomic_t host_resized = 0;
+static bool follow_host = false; // Resize the screen to fit the host terminal
+static bool resized = false;     // The screen has been resized (so redraw it all)
 
 // Output to the host terminal
 static char out[1 << 20];
@@ -134,6 +136,42 @@ static void pallet_cb(void *d, vt_cell_colour_t i, uint32_t r, uint32_t g, uint3
 static void reply_cb(void *ctx, const vt_char_t *s, uint32_t n) {
     (void)ctx;
     write_all(master, s, n);
+}
+
+// ---- Resizing ----
+
+// The most the screen can be: the capacity, and in interactive mode what
+// fits in the host terminal (with the frame and status line)
+static void max_size(int *w, int *h) {
+    *w = VT_SCREEN_MAX_COLS;
+    *h = VT_SCREEN_MAX_ROWS;
+    struct winsize ws;
+    if (interactive && ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) {
+        if (ws.ws_col - 1 < *w) *w = ws.ws_col - 1;
+        if (ws.ws_row - 2 < *h) *h = ws.ws_row - 2;
+    }
+}
+
+// Resize the screen and tell the command, as a window manager would (it
+// gets SIGWINCH). A Pico on a serial line can't do this, so there the
+// command finds out from a report (?2048) or by running resize.
+static void resize(int w, int h) {
+    int mw, mh;
+    max_size(&mw, &mh);
+    if (w > mw) w = mw;
+    if (h > mh) h = mh;
+    if (w < 2) w = 2;
+    if (h < 2) h = 2;
+    vt_emu_resize(&emu, (vt_coord_t)w, (vt_coord_t)h);
+    struct winsize ws = { .ws_row = emu.term.h, .ws_col = emu.term.w };
+    if (master >= 0) ioctl(master, TIOCSWINSZ, &ws);
+    resized = true;
+}
+
+// The command asked for a new size (ESC [ 8 ; h ; w t): allow what fits
+static void resize_req_cb(void *ctx, vt_coord_t w, vt_coord_t h) {
+    (void)ctx;
+    resize(w, h);
 }
 
 // ---- Host terminal ----
@@ -206,6 +244,8 @@ static char glyph(vt_cell_t cell) {
 
 static void render(bool full) {
     vt_term_t *const t = &emu.term;
+    const int cols = t->w;
+    const int rows = t->h;
     outf("\033[?25l");
     if (full) {
         // Clear and draw the frame
@@ -255,6 +295,8 @@ static void render(bool full) {
 // The screen as text, with trailing spaces removed
 static void dump(FILE *f) {
     vt_term_t *const t = &emu.term;
+    const int cols = t->w;
+    const int rows = t->h;
     for (int r = 0; r < rows; ++r) {
         char line[VT_SCREEN_MAX_COLS + 1];
         int n = 0;
@@ -306,6 +348,7 @@ static void usage(void) {
         "Runs command (default $SHELL) in a pseudo terminal through the pico-vt emulator.\n"
         "\n"
         "  -s COLSxROWS  screen size (default 80x24, at most %dx%d)\n"
+        "  -R            resize the screen to fit this terminal when it is resized\n"
         "  -t TERM       TERM for the command (default xterm-256color)\n"
         "  -A            no alternate screen\n"
         "  -H            headless: don't draw or read the keyboard\n"
@@ -329,7 +372,7 @@ int main(int argc, char **argv) {
     int n_keys = 0;
 
     int opt;
-    while ((opt = getopt(argc, argv, "s:t:AHk:K:w:dh")) != -1) {
+    while ((opt = getopt(argc, argv, "s:t:RAHk:K:w:dh")) != -1) {
         switch (opt) {
             case 's':
                 if (sscanf(optarg, "%dx%d", &cols, &rows) != 2 || cols < 2 || rows < 2 ||
@@ -339,6 +382,7 @@ int main(int argc, char **argv) {
                 }
                 break;
             case 't': term = optarg; break;
+            case 'R': follow_host = true; break;
             case 'A': use_alt = false; break;
             case 'H': interactive = false; break;
             case 'k':
@@ -357,9 +401,10 @@ int main(int argc, char **argv) {
     }
     // The emulator
     vt_pallet_make_256_colours(NULL, pallet_cb);
-    vt_emu_init(&emu, grid, (vt_coord_t)cols, (vt_coord_t)rows);
+    vt_emu_init_cap(&emu, grid, VT_SCREEN_MAX_COLS, VT_SCREEN_MAX_ROWS, (vt_coord_t)cols, (vt_coord_t)rows);
     if (use_alt) vt_emu_set_alt_grid(&emu, alt_grid);
     vt_emu_set_reply(&emu, reply_cb, NULL);
+    vt_emu_set_resize_req(&emu, resize_req_cb, NULL);
 
     if (interactive && !host_setup()) return 1;
 
@@ -428,8 +473,13 @@ int main(int argc, char **argv) {
         if (wait_ms && now - start >= wait_ms) break;
 
         if (interactive) {
-            if (host_resized) {
+            if (host_resized && follow_host) {
+                struct winsize ws;
+                if (ioctl(STDOUT_FILENO, TIOCGWINSZ, &ws) == 0) resize(ws.ws_col - 1, ws.ws_row - 2);
+            }
+            if (host_resized || resized) {
                 host_resized = 0;
+                resized = false;
                 render(true);
                 last_render = now;
                 dirty = false;

@@ -122,6 +122,48 @@ Switching swaps the row pointers, so `term.rp` is always the screen in use and t
 changes. Without an alternate grid the switch is ignored (the screen is not cleared) but the cursor is
 still saved and restored.
 
+### Resizing
+
+To change the size at run time, give the terminal a grid for the most it could be (its capacity) and
+start it at any size within that:
+
+```C
+static vt_cell_t _screen[MAX_ROWS][MAX_COLS];
+
+vt_emu_init_cap(&vt_emu, (vt_cell_t*)_screen, MAX_COLS, MAX_ROWS, 64, 20);
+```
+
+Then `vt_emu_resize(&vt_emu, w, h)` changes it, moving no cells and allocating nothing. As xterm, text
+is not reflowed: shrinking hides cells and growing shows blank ones. If the cursor would be below the new
+bottom, the screen scrolls up to keep its line in view. The scroll region is reset. The alternate grid,
+if there is one, must have the same capacity. The capacity is at most `VT_SCREEN_MAX_COLS` x
+`VT_SCREEN_MAX_ROWS` (80 x 60), which can be changed with `-D`.
+
+The renderer should draw `term.w` x `term.h` cells (read once a frame) and fill the rest of the display.
+Every row pointer up to the capacity is always valid, so a renderer on the other core can't read outside
+the grid while a resize is under way; at worst it shows one odd frame. Call `vt_emu_resize()` from the
+same core as `vt_emu_put_ch()`.
+
+Changes can start from either end:
+
+* **The display** (a font change, a status line, a window manager) calls `vt_emu_resize()`.
+* **The host** asks with `ESC [ 8 ; h ; w t`. The emulator doesn't decide: it calls the function set
+  with `vt_emu_set_resize_req()`, which may resize to that size (it is already limited to the capacity), a
+  different one or not at all. Without one, requests are ignored.
+
+Over a serial line the host's tty doesn't know the size has changed (there is no `SIGWINCH`), so it
+has to be told:
+
+* `eval $(resize)` (from xterm) asks for the size and sets the tty's (`stty rows ... cols ...`).
+* `ESC [ 18 t` reports the size as `ESC [ 8 ; h ; w t` and `ESC [ 19 t` the capacity as
+  `ESC [ 9 ; h ; w t`. With `vt_emu_set_cell_size()`, `ESC [ 14 t` and `ESC [ 16 t` report the
+  text area and cell sizes in pixels.
+* A program that turns on mode `?2048` (in-band resize notifications, as Contour, kitty and foot) is
+  sent `ESC [ 48 ; h ; w ; hpx ; wpx t` straight away and each time the size changes.
+
+The desktop harness (`make harness`) shows this through a pty: `-R` follows the size of the terminal
+it runs in and the command's requests are allowed if they fit.
+
 ### Modes
 
 Modes are set by the host with SM/RM (`ESC [ n h` / `ESC [ n l`) or directly with `vt_term_mode_set()`:
@@ -134,7 +176,8 @@ Modes are set by the host with SM/RM (`ESC [ n h` / `ESC [ n l`) or directly wit
 | `VT_TERM_MODE_INSERT` | `4` | off | Insert rather than overwrite characters (IRM) |
 | `VT_TERM_MODE_LNM` | `20` | off | LF, VT and FF also return to column 0 (LNM) |
 
-The alternate screen modes `?47`, `?1047`, `?1048` and `?1049` are also supported (as xterm).
+The alternate screen modes `?47`, `?1047`, `?1048` and `?1049` are also supported (as xterm), as is
+`?2048` (resize notifications, see [Resizing](#resizing)).
 
 ### Supported sequences
 
@@ -147,7 +190,8 @@ The alternate screen modes `?47`, `?1047`, `?1048` and `?1049` are also supporte
 | Scrolling | DECSTBM `r`, SU `S`, SD `T` |
 | Tabs | CHT `I`, CBT `Z`, TBC `g` |
 | Attributes | SGR `m`: styles 0-9 and 22-29, colours 30-37/39, 40-47/49, 90-97, 100-107, `38;5;n`, `48;5;n`, `38;2;r;g;b`, `48;2;r;g;b` |
-| Modes | SM/RM `h` `l`: `4`, `20`, `?6`, `?7`, `?25`, `?47`, `?1047`, `?1048`, `?1049` |
+| Modes | SM/RM `h` `l`: `4`, `20`, `?6`, `?7`, `?25`, `?47`, `?1047`, `?1048`, `?1049`, `?2048` |
+| Window | XTWINOPS `t`: `8` resize request, `14` `16` `18` `19` size reports |
 | Reports | DA `c`, DSR `5n` and `6n`, OSC `10;?` and `11;?` (default foreground and background colours) |
 
 Other OSC strings (e.g. window titles) are consumed and ignored; they can end with BEL, `ESC \` or ST. Unsupported private sequences (`ESC [ ? ...`,

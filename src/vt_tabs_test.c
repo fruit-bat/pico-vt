@@ -73,6 +73,27 @@ int main() {
     assert(vt_tabs_prev(&t, 8, 1) == 8);
     assert(vt_tabs_next(&t, 8, 1) == 8);
 
+    // Resizing keeps the stops that were set and adds the defaults beyond
+    vt_tabs_init(&t, 16, 5);
+    vt_tabs_clear_tab(&t, 5);
+    vt_tabs_set_tab(&t, 7);
+    vt_tabs_resize(&t, 23, 5);
+    //                              00000000001111111111222
+    //                              01234567890123456789012
+    const char* expected_grow   = "*      *  *    *    * *";
+    for(vt_coord_t i = 0; i < 23; ++i) {
+        assert(vt_tabs_is_tab(&t, i) == (expected_grow[i] == '*'));
+    }
+    assert(vt_tabs_next(&t, 20, 1) == 22);
+
+    // Shrinking gives the new last column a stop
+    vt_tabs_resize(&t, 13, 5);
+    const char* expected_shrink = "*      *  * *";
+    for(vt_coord_t i = 0; i < 13; ++i) {
+        assert(vt_tabs_is_tab(&t, i) == (expected_shrink[i] == '*'));
+    }
+    assert(vt_tabs_next(&t, 10, 5) == 12);
+
     printf("all ok\n");
     return 0;
 }   

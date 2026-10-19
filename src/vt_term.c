@@ -147,13 +147,21 @@ void vt_term_putch(
 }
 
 
+// A space with the default attributes
+static vt_cell_t vt_term_default_blank(void) {
+    return vt_cell_combine(
+        vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS),
+        (vt_char_t)' ');
+}
+
 void vt_term_alt_set(
     vt_term_t* t, // The terminal
     bool on       // Use the alternate screen
 ) {
     if (!t->alt || t->alt_active == on) return;
-    // Swap the row pointers so rp is always the screen in use
-    for (vt_coord_t r = 0; r < t->h; ++r) {
+    // Swap the row pointers so rp is always the screen in use (all of the
+    // capacity, as rows past the bottom may come back into view on a resize)
+    for (vt_coord_t r = 0; r < t->ch; ++r) {
         vt_cell_t* const tmp = t->rp[r];
         t->rp[r] = t->alt_rp[r];
         t->alt_rp[r] = tmp;
@@ -169,13 +177,11 @@ void vt_term_alt_init(
     vt_term_alt_set(t, false);
     t->alt = grid != NULL;
     if (!grid) return;
-    const vt_cell_t blank = vt_cell_combine(
-        vt_cell_enc_attr(VT_TERM_DEFAULT_FG, VT_TERM_DEFAULT_BG, VT_TERM_DEFAULT_FLAGS),
-        (vt_char_t)' ');
-    for (vt_coord_t r = 0; r < t->h; ++r) {
+    const vt_cell_t blank = vt_term_default_blank();
+    for (vt_coord_t r = 0; r < t->ch; ++r) {
         t->alt_rp[r] = grid;
-        for (vt_coord_t c = 0; c < t->w; ++c) grid[c] = blank;
-        grid += t->w;
+        for (vt_coord_t c = 0; c < t->cw; ++c) grid[c] = blank;
+        grid += t->cw;
     }
 }
 
@@ -236,23 +242,92 @@ void vt_term_init(
     vt_coord_t w,    // Terminal width in characters
     vt_coord_t h     // Terminal height in characters
 ) {
-    // Set the terminal size
-    t->w = w; // Terminal width
-    t->h = h; // Terminal height
+    vt_term_init_cap(t, grid, w, h, w, h);
+}
+
+void vt_term_init_cap(
+    vt_term_t *t,    // The terminal
+    vt_cell_t *grid, // Cell grid for the display, cw x ch
+    vt_coord_t cw,   // Capacity width in characters
+    vt_coord_t ch,   // Capacity height in characters
+    vt_coord_t w,    // Terminal width in characters
+    vt_coord_t h     // Terminal height in characters
+) {
+    // Set the capacity and the terminal size within it
+    t->cw = MIN(cw, VT_SCREEN_MAX_COLS);
+    t->ch = MIN(ch, VT_SCREEN_MAX_ROWS);
+    t->w = MAX(MIN(w, t->cw), 1); // Terminal width
+    t->h = MAX(MIN(h, t->ch), 1); // Terminal height
 
     // No alternate screen until one is provided
     t->alt = false;
     t->alt_active = false;
 
-    // TODO perhaps these should be passed in?
-    // Initialize the row pointers
-    for (vt_coord_t r = 0; r < h; ++r)
+    // Initialize the row pointers, for the whole capacity, blanking the
+    // parts out of view too so a resize can't show junk
+    const vt_cell_t blank = vt_term_default_blank();
+    for (vt_coord_t r = 0; r < t->ch; ++r)
     {
         t->rp[r] = grid;
-        grid += w;
+        for (vt_coord_t c = 0; c < t->cw; ++c) grid[c] = blank;
+        grid += t->cw;
     }
 
     vt_term_reset(t);
+}
+
+// Blank the cells of one screen that a resize from ow x oh to w x h brings into view
+static void vt_term_blank_exposed(
+    vt_cell_t **rp, // The screen's row pointers
+    vt_coord_t ow,  // Old width
+    vt_coord_t oh,  // Old height
+    vt_coord_t w,   // New width
+    vt_coord_t h    // New height
+) {
+    const vt_cell_t blank = vt_term_default_blank();
+    for (vt_coord_t r = 0; r < h; ++r) {
+        for (vt_coord_t c = r < oh ? ow : 0; c < w; ++c) rp[r][c] = blank;
+    }
+}
+
+void vt_term_resize(
+    vt_term_t *t, // The terminal
+    vt_coord_t w, // New width in characters
+    vt_coord_t h  // New height in characters
+) {
+    w = MAX(MIN(w, t->cw), 1);
+    h = MAX(MIN(h, t->ch), 1);
+    const vt_coord_t ow = t->w;
+    const vt_coord_t oh = t->h;
+
+    // Keep the cursor's line in view by scrolling the screen in use up. The
+    // rows scrolled off the top go below the bottom, out of view.
+    if (t->r >= h) {
+        const vt_coord_t k = t->r - h + 1;
+        vt_cell_t *tmp[VT_SCREEN_MAX_ROWS];
+        for (vt_coord_t i = 0; i < k; ++i) tmp[i] = t->rp[i];
+        for (vt_coord_t i = k; i < oh; ++i) t->rp[i - k] = t->rp[i];
+        for (vt_coord_t i = 0; i < k; ++i) t->rp[oh - k + i] = tmp[i];
+        t->r -= k;
+    }
+
+    // Blank what comes into view before it is shown
+    vt_term_blank_exposed(t->rp, ow, oh, w, h);
+    if (t->alt) vt_term_blank_exposed(t->alt_rp, ow, oh, w, h);
+
+    t->w = w;
+    t->h = h;
+
+    // The whole screen scrolls
+    t->mt = 0;
+    t->mb = h - 1;
+
+    // Keep the cursors on the screen
+    t->wrap = false;
+    t->r = MIN(t->r, h - 1);
+    t->c = MIN(t->c, w - 1);
+    t->s_r = MIN(t->s_r, h - 1);
+    t->s_c = MIN(t->s_c, w - 1);
 }
 
 void vt_term_cursor_set(

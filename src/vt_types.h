@@ -33,7 +33,14 @@
 extern "C" {
 #endif 
 
+// The largest grid (capacity) a terminal can have. Override with -D to save
+// or allow more memory: the row pointers and tab stops are sized by these.
+#ifndef VT_SCREEN_MAX_COLS
 #define VT_SCREEN_MAX_COLS 80
+#endif
+#ifndef VT_SCREEN_MAX_ROWS
+#define VT_SCREEN_MAX_ROWS 60
+#endif
 typedef uint8_t vt_char_t;  // The character type
 typedef uint16_t vt_coord_t; // cols, rows, col, row etc.
 typedef int16_t vt_match_t; // Match symbol

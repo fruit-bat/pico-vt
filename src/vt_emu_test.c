@@ -1102,6 +1102,106 @@ void test_alt_screen(vt_emu_t* e) {
     vt_emu_set_alt_grid(e, NULL);
 }
 
+static vt_coord_t req_w, req_h;
+static uint32_t req_n;
+
+// A display that accepts whatever size the host asks for
+static void accept_resize(void* ctx, vt_coord_t w, vt_coord_t h) {
+    req_w = w;
+    req_h = h;
+    req_n++;
+    vt_emu_resize((vt_emu_t*)ctx, w, h);
+}
+
+// Resize from the display without a sequence, checking what the host is told
+static void check_resize_reply(vt_emu_t* e, vt_coord_t w, vt_coord_t h, const char* expect) {
+    reply_len = 0;
+    reply_buf[0] = 0;
+    vt_emu_resize(e, w, h);
+    assert(strcmp(reply_buf, expect) == 0);
+}
+
+void test_resize() {
+    vt_cell_t grid[16][20];
+    vt_emu_t ee;
+    vt_emu_t* const e = &ee;
+    vt_term_t* const t = &e->term;
+
+    printf("Test resize\n");
+    // A 10 x 6 terminal that can grow to 20 x 16
+    vt_emu_init_cap(e, (vt_cell_t*)grid, 20, 16, 10, 6);
+    assert(t->w == 10 && t->h == 6);
+    vt_emu_set_reply(e, capture_reply, reply_buf);
+
+    // Size reports: the text area and the most it could be
+    check_reply(e, "\033[18t", "\033[8;6;10t");
+    check_reply(e, "\033[19t", "\033[9;16;20t");
+    // Pixel sizes are only reported when the cell size is known
+    check_reply(e, "\033[14t", "");
+    check_reply(e, "\033[16t", "");
+    vt_emu_set_cell_size(e, 8, 12);
+    check_reply(e, "\033[14t", "\033[4;72;80t");
+    check_reply(e, "\033[16t", "\033[6;12;8t");
+    // Other window operations and private variants are ignored
+    check_reply(e, "\033[11t\033[>18t\033[?18t", "");
+
+    // Without a resize function the host's requests are ignored
+    check_reply(e, "\033[8;7;12t", "");
+    assert(t->w == 10 && t->h == 6);
+
+    // The display decides
+    vt_emu_set_resize_req(e, accept_resize, e);
+    check_reply(e, "\033[8;7;12t", "");
+    assert(req_n == 1 && req_w == 12 && req_h == 7);
+    assert(t->w == 12 && t->h == 7);
+    // Omitted sizes are unchanged
+    check_reply(e, "\033[8t", "");
+    assert(req_n == 2 && req_w == 12 && req_h == 7);
+    check_reply(e, "\033[8;9t", "");
+    assert(req_w == 12 && req_h == 9);
+    // 0, or too big, is the most there is
+    check_reply(e, "\033[8;0;0t", "");
+    assert(req_w == 20 && req_h == 16);
+    check_reply(e, "\033[8;99;5t", "");
+    assert(req_w == 5 && req_h == 16);
+    assert(t->w == 5 && t->h == 16);
+
+    // The text after a request goes on the resized screen
+    vt_emu_put_str(e, (vt_char_t*)"\033[8;6;10t\033[H\033[2Jhello world");
+    assert(t->w == 10 && t->h == 6);
+    check_grid_row(t, 0, "hello worl");
+    check_grid_row(t, 1, "d         ");
+
+    // In-band resize notifications (?2048) start with the size now
+    check_reply(e, "\033[?2048h", "\033[48;6;10;72;80t");
+    check_resize_reply(e, 20, 16, "\033[48;16;20;192;160t");
+    // Only when the size changes
+    check_resize_reply(e, 20, 16, "");
+    check_resize_reply(e, 30, 30, "");
+    // Including when the host asked for it
+    check_reply(e, "\033[8;6;10t", "\033[48;6;10;72;80t");
+    // Turned off by the host or a reset
+    check_reply(e, "\033[?2048l", "");
+    check_resize_reply(e, 12, 7, "");
+    check_reply(e, "\033[?2048h", "\033[48;7;12;84;96t");
+    vt_emu_reset(e);
+    check_resize_reply(e, 10, 6, "");
+    // Reset keeps the resize function and the size
+    check_reply(e, "\033[8;6;11t", "");
+    assert(req_w == 11 && t->w == 11 && t->h == 6);
+
+    // The tab stops follow the width
+    vt_emu_resize(e, 20, 6);
+    vt_emu_put_str(e, (vt_char_t*)"\033[H\t\t");
+    assert(t->c == 16);
+    vt_emu_put_str(e, (vt_char_t*)"\t");
+    assert(t->c == 19);
+    vt_emu_resize(e, 10, 6);
+    assert(t->c == 9);
+    vt_emu_put_str(e, (vt_char_t*)"\033[H\t\t");
+    assert(t->c == 9);
+}
+
 int main() {
 
     const vt_coord_t w = 20;
@@ -1130,6 +1230,7 @@ int main() {
     test_alt_screen(&e);
     test_repeat_character(&e);
     test_horizontal_tabs(&e);
+    test_resize();
     // test_stdin(&e);
 
     printf("All OK\n");
